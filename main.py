@@ -6,11 +6,13 @@ from datetime import datetime
 import sys
 
 import config
-from config import logger, client, SYNC_POS_INTERVAL
-
-# ─── Eventos globales ────────────────────────────────────────
-PAUSED = asyncio.Event(); PAUSED.set()
-SHUTTING_DOWN = asyncio.Event()
+from config import (
+    logger,
+    client,
+    SYNC_POS_INTERVAL,
+    PAUSED,
+    SHUTTING_DOWN,
+)
 
 # ─── supervise simple: solo reinicia si crashea ──────────────
 async def supervise(coro_factory, *args):
