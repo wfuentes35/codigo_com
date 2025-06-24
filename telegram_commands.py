@@ -13,7 +13,6 @@ from config import (
     TELEGRAM_TOKEN,
     logger,
     FASE0_SETTINGS,
-    SHUTTING_DOWN,
     update_fase0_setting,
     update_min_entry_usdt,
 )
@@ -100,17 +99,6 @@ def build_telegram_app(
             await update.message.reply_text(f"Error vendiendo: {e}")
         await asyncio.sleep(2)
         sys.exit(0)                      # proceso terminará; tmux / systemd lo maneja
-
-    async def shutdown_cmd(update, ctx):
-        await update.message.reply_text("♻️ Vendiendo todo y apagando…")
-        ok = await _liquidate_all(config.client)
-        if not ok:
-            await update.message.reply_text(
-                "❌ No se pudo liquidar todo. Revisa saldo manualmente y vuelve a /apagar."
-            )
-            return
-        SHUTTING_DOWN.set()
-        sys.exit(0)                # proceso terminará; run_bot.sh lo relanza
 
     async def restart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("♻️ Reiniciando proceso…")
