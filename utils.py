@@ -9,6 +9,17 @@ from binance import exceptions as bexc
 from config import client, logger, telegram_bot, TELEGRAM_CHAT_ID
 
 # ─────────────────────────────────────────────────────────────
+#  Cachés simples con TTL
+# ─────────────────────────────────────────────────────────────
+
+_SYMBOLS_CACHE: dict[str, tuple[float, list[str]]] = {}
+_HIST_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
+
+# TTL por defecto
+SYMBOLS_TTL = 1800  # seg – listado de pares USDT
+HIST_TTL    = 120   # seg – históricos de precios
+
+# ─────────────────────────────────────────────────────────────
 #  Antiflood Telegram
 # ─────────────────────────────────────────────────────────────
 _LOCKS_BY_LOOP: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
@@ -47,14 +58,20 @@ async def _bin_sem() -> asyncio.Semaphore:
 # ─────────────────────────────────────────────────────────────
 #  Binance helpers
 # ─────────────────────────────────────────────────────────────
-async def get_all_usdt_symbols():
+async def get_all_usdt_symbols(ttl: int = SYMBOLS_TTL) -> list[str]:
+    """Lista de pares *USDT* filtrados. Usa caché con TTL en segundos."""
+    now = asyncio.get_event_loop().time()
+    ts, cached = _SYMBOLS_CACHE.get("ts", 0.0), _SYMBOLS_CACHE.get("data")
+    if cached and now - ts < ttl:
+        return cached
+
     async with await _bin_sem():
         info = await asyncio.to_thread(client.get_exchange_info)
 
     excluded = {"BUSD", "USDC", "TUSD", "EUR", "AUD", "BRL", "IDRT",
                 "PAX", "USDP", "DAI", "XUSD", "USD1", "VIDT", "FDUSD"}
 
-    return [
+    symbols = [
         s["symbol"] for s in info["symbols"]
         if (
             s["status"] == "TRADING"
@@ -63,8 +80,20 @@ async def get_all_usdt_symbols():
             and s["baseAsset"] not in excluded
         )
     ]
+    _SYMBOLS_CACHE["ts"] = now
+    _SYMBOLS_CACHE["data"] = symbols
+    return symbols
 
-async def get_historical_data(symbol: str, interval: str, limit: int = 100):
+async def get_historical_data(symbol: str, interval: str, limit: int = 100,
+                              ttl: int = HIST_TTL) -> pd.DataFrame | None:
+    """Obtiene klines de Binance usando caché con TTL."""
+    key = (symbol, interval, limit)
+    now = asyncio.get_event_loop().time()
+    if key in _HIST_CACHE:
+        ts, cached = _HIST_CACHE[key]
+        if now - ts < ttl:
+            return cached
+
     try:
         async with await _bin_sem():
             klines = await asyncio.to_thread(
@@ -83,6 +112,7 @@ async def get_historical_data(symbol: str, interval: str, limit: int = 100):
         )
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         df.set_index("open_time", inplace=True)
+        _HIST_CACHE[key] = (now, df)
         return df
 
     except bexc.BinanceAPIException as e:
