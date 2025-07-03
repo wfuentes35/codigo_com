@@ -1,6 +1,12 @@
 # fases/fase2.py – Compra tras cruce HMA‑8 ↑ EMA‑24, trailing, PnL real y salida por cruce bajista
 # =================================================================================================
 # Archivo completo. Sustituye tu fases/fase2.py por este contenido.
+"""Fase 2 – ejecución y gestión de operaciones.
+
+Detecta el cruce alcista HMA‑8/EMA‑24, abre una posición y aplica distintos
+métodos de salida: trailing por ATR, Δ‑stop y stop absoluto.  Reporta el PnL real
+o simulado vía Telegram.
+"""
 
 import config, asyncio, pandas as pd
 from config import PAUSED, SHUTTING_DOWN
@@ -14,7 +20,8 @@ from config import (
 )
 from utils import (
     get_historical_data, send_telegram_message, hull_moving_average, rsi,
-    get_step_size,
+    get_step_size, atr_stop, trailing_atr_trigger, delta_stop_trigger,
+    absolute_stop_trigger,
 )
 from fases.fase3 import phase3_replenish
 
@@ -48,17 +55,9 @@ async def _fee_to_usdt(client, fills, quote="USDT") -> float:
 def ema_slope_positive(series: pd.Series, bars=SLOPE_BARS) -> bool:
     return (series.diff().tail(bars) > 0).all()
 
+# devuelve True si la EMA de mayor tiempo está en tendencia alcista
 def ema_htf_up(close: pd.Series) -> bool:
     return close.ewm(span=TREND_PERIOD).mean().diff().iloc[-1] > 0
-
-def atr_stop(df: pd.DataFrame, price: float) -> float:
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - df["close"].shift()).abs(),
-        (df["low"]  - df["close"].shift()).abs(),
-    ], axis=1).max(axis=1)
-    atr = tr.rolling(14).mean().iloc[-1]
-    return price - STOP_ATR_MULT * atr
 
 # ───── Market BUY wrapper ───────────────────────────────────────────────
 async def _buy_market(sym, client, usdt, hint_price):
@@ -86,6 +85,8 @@ async def _buy_market(sym, client, usdt, hint_price):
     return dict(qty=qty, price=price, entry_cost=cost+fee, commission=fee)
 # ───── Evaluador por símbolo ────────────────────────────────────────────
 async def _evaluate(sym, state, client, freed):
+    """Gestiona entrada y salida individual de ``sym``."""
+
     rec = state.get(sym)
 
     # -------- ENTRADA --------
@@ -124,7 +125,7 @@ async def _evaluate(sym, state, client, freed):
             entry_price=trade["price"],
             entry_cost=trade["entry_cost"],
             quantity=trade["qty"],
-            stop=atr_stop(df, trade["price"]),
+            stop=atr_stop(df, trade["price"], STOP_ATR_MULT),
             max_price=trade["price"],
             commission=trade["commission"],
         )
@@ -152,20 +153,17 @@ async def _evaluate(sym, state, client, freed):
             freed.append(sym)
 
         # Trailing ATR
-        if not LIGHT_MODE:
-            if last > rec["entry_price"] + TRAILING_USDT:
-                rec["stop"] = max(rec["stop"], last - TRAILING_USDT)
-            if last < rec["stop"]:
-                await send_telegram_message(f"🚨 STOP {sym} @ {last:.4f}")
-                freed.append(sym)
+        if not LIGHT_MODE and trailing_atr_trigger(rec, last, TRAILING_USDT):
+            await send_telegram_message(f"🚨 STOP {sym} @ {last:.4f}")
+            freed.append(sym)
 
         # Δ-stop
-        if last < rec["max_price"] - config.STOP_DELTA_USDT:
+        if delta_stop_trigger(rec, last, config.STOP_DELTA_USDT):
             await send_telegram_message(f"🚨 Δ-STOP {sym} @ {last:.4f}")
             freed.append(sym)
 
         # stop absoluto
-        if last * rec["quantity"] < config.STOP_ABS_USDT:
+        if absolute_stop_trigger(rec["quantity"], last, config.STOP_ABS_USDT):
             await send_telegram_message(f"🚨 ABS-STOP {sym} @ {last:.4f}")
             freed.append(sym)
 

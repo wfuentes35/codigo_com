@@ -7,7 +7,7 @@ import logging
 from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 from dotenv import load_dotenv
-from telegram import Bot
+from utils import send_telegram_message
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -18,16 +18,6 @@ logging.basicConfig(
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-telegram_bot = Bot(token=TELEGRAM_TOKEN)
-
-async def send_telegram_message(message: str):
-    try:
-        await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        logger.info(f"Mensaje enviado a Telegram: {message}")
-    except Exception as e:
-        logger.error(f"Error al enviar mensaje por Telegram: {e}")
-    finally:
-        await asyncio.sleep(2.0)
 
 async def comprar_criptomoneda(account_name: str, symbol: str) -> dict:
     """Orden de compra Spot usando quoteOrderQty."""

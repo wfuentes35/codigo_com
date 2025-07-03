@@ -147,14 +147,23 @@ def build_telegram_app(
 
         if compradas:
             líneas.append("💰 Posiciones sincronizadas:")
-            for sym, rec in compradas:
-                entry_val  = rec.get("entry_value", rec.get("entry_price", 0.0))
+            tickers = await asyncio.gather(*[
+                asyncio.to_thread(config.client.get_symbol_ticker, symbol=s)
+                for s, _ in compradas
+            ], return_exceptions=True)
+            for (sym, rec), t in zip(compradas, tickers):
+                price = float(t["price"]) if not isinstance(t, Exception) else rec.get("entry_price", 0.0)
+                qty   = rec.get("quantity", 0.0)
+                entry_val = rec.get("entry_value", rec.get("entry_price", 0.0)*qty)
+                curr_val  = price * qty
+                pnl = curr_val - entry_val
+                pct = 100 * pnl / entry_val if entry_val else 0.0
                 max_val    = rec.get("max_value",   rec.get("max_price",  0.0))
                 stop_delta = rec.get("stop_delta",  rec.get("stop",       0.0))
                 stop_abs   = rec.get("stop_abs",    0.0)
                 líneas.append(
-                    f"{sym}: entrada={entry_val:.2f} | máx={max_val:.2f} | "
-                    f"Δ-stop={stop_delta:.2f} | stop_abs={stop_abs:.2f}"
+                    f"{sym}: PnL={pnl:.2f} ({pct:.2f}%) | "
+                    f"máx={max_val:.2f} Δ-stop={stop_delta:.2f} | stop_abs={stop_abs:.2f}"
                 )
         await update.message.reply_text("\n".join(líneas))
 
