@@ -40,6 +40,8 @@ MIN_SYNC_USDT            = 10.0
 TRAILING_USDT            = 2.0            # colchón ATR
 STOP_DELTA_USDT          = 1.0            # trailing dinámico (máx-price−Δ)
 STOP_ABS_USDT            = 18.0           # stop absoluto en valor
+STOP_ABS_HIGH_FACTOR     = 51.0           # stop por cantidad si precio alto
+STOP_ABS_HIGH_THRESHOLD  = 55.0           # umbral de precio alto USDT
 # modo liviano
 LIGHT_MODE               = True          # True → Fase2 sólo entradas
 # ciclo y slots

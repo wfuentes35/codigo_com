@@ -1,3 +1,11 @@
+
+"""Funciones auxiliares para el bot.
+
+Contiene indicadores técnicos, wrappers de Binance con control de
+concurrencia y un sistema antiflood para Telegram.  Se implementan
+pequeños cachés con TTL para reducir peticiones repetitivas.
+"""
+
 # utils.py – indicadores, Binance helpers y antiflood Telegram
 # ============================================================
 
@@ -6,7 +14,21 @@ import pandas as pd
 import numpy as np
 import telegram.error
 from binance import exceptions as bexc
-from config import client, logger, telegram_bot, TELEGRAM_CHAT_ID
+from config import (
+    client, logger, telegram_bot, TELEGRAM_CHAT_ID,
+    STOP_ABS_HIGH_FACTOR, STOP_ABS_HIGH_THRESHOLD,
+)
+
+# ─────────────────────────────────────────────────────────────
+#  Cachés simples con TTL
+# ─────────────────────────────────────────────────────────────
+
+_SYMBOLS_CACHE: dict[str, tuple[float, list[str]]] = {}
+_HIST_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
+
+# TTL por defecto
+SYMBOLS_TTL = 1800  # seg – listado de pares USDT
+HIST_TTL    = 120   # seg – históricos de precios
 
 # ─────────────────────────────────────────────────────────────
 #  Cachés simples con TTL
@@ -153,6 +175,46 @@ def rsi(series, period: int = 14):
     avg_l = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_g / avg_l
     return 100 - 100 / (1 + rs)
+
+# ─────────────────────────────────────────────────────────────
+#  Stops y triggers
+# ─────────────────────────────────────────────────────────────
+def atr_stop(df: pd.DataFrame, price: float, mult: float = 1.2, period: int = 14) -> float:
+    """Calcula stop basado en ATR para ``price``."""
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift()).abs(),
+        (df["low"] - df["close"].shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return price - mult * atr
+
+def trailing_atr_trigger(rec: dict, last: float, buffer: float) -> bool:
+    """Actualiza ``rec['stop']`` y devuelve ``True`` si se activa."""
+    if last > rec["entry_price"] + buffer:
+        rec["stop"] = max(rec["stop"], last - buffer)
+    return last < rec["stop"]
+
+def delta_stop_trigger(rec: dict, last: float, delta_usdt: float) -> bool:
+    """Devuelve ``True`` si el precio cae más de ``delta_usdt`` desde el máximo."""
+    return last < rec["max_price"] - delta_usdt
+
+def absolute_stop_trigger(qty: float, last: float, stop_abs_usdt: float) -> bool:
+    """Devuelve ``True`` si el valor de la posición es menor que ``stop_abs_usdt``."""
+    return qty * last < stop_abs_usdt
+
+def update_light_stops(rec: dict, qty: float, price: float,
+                       stop_delta_usdt: float, stop_abs_usdt: float) -> bool:
+    """Actualiza max_value, Δ-stop y stop_abs. Devuelve ``True`` si se activa."""
+    value = qty * price
+    rec["max_value"] = max(rec.get("max_value", 0.0), value)
+    rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
+    rec["stop_abs"] = (
+        STOP_ABS_HIGH_FACTOR * qty
+        if price >= STOP_ABS_HIGH_THRESHOLD
+        else stop_abs_usdt
+    )
+    return value < rec["stop_delta"] or value < rec["stop_abs"]
 
 # ─────────────────────────────────────────────────────────────
 #  LOT_SIZE helper (stepSize cache)

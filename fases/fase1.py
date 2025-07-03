@@ -1,3 +1,11 @@
+
+"""Fase 1 – Búsqueda de precandidatos.
+
+Escanea todos los pares USDT en busca de cruces inminentes HMA‑8 por debajo de
+EMA‑24 en el marco de 30 minutos.  Los símbolos válidos se marcan como
+``RESERVADA_PRE`` para que otras fases los vigilen.
+"""
+
 # fases/fase1.py – Precandidato Scanner mejorado (30 m near-cross)
 # -----------------------------------------------------------------
 # Selecciona pares USDT que están a punto de cruzar HMA-8 ↑ EMA-24 en 30 m.
