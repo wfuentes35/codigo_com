@@ -1,8 +1,17 @@
-# fases/fase1.py – Precandidato Scanner mejorado (30 m near-cross)
+
+"""Fase 1 – Búsqueda de precandidatos.
+
+Escanea todos los pares USDT en marco 30m buscando velas que cierren por encima
+de la banda superior de Bollinger con volumen alto.  Los símbolos válidos se
+marcan como ``RESERVADA_PRE`` para que Fase 2 espere el pullback y ejecute la
+entrada.
+"""
+
+# fases/fase1.py – Precandidato Scanner (ruptura BB + volumen)
 # -----------------------------------------------------------------
-# Selecciona pares USDT que están a punto de cruzar HMA-8 ↑ EMA-24 en 30 m.
-# Coloca el símbolo como "RESERVADA_PRE" para que fase0_precross / phase0_cross15m
-# los vigilen y, si procede, fase2 los compre.
+# Selecciona pares USDT cuya última vela de 30 m ha cerrado sobre la banda
+# superior de Bollinger con el doble de volumen que el promedio.  Se marcan como
+# "RESERVADA_PRE" para que fase2 vigile el retroceso y rebote.
 # -----------------------------------------------------------------
 import asyncio, pandas as pd
 from config import (
@@ -14,8 +23,8 @@ from utils import (
     get_historical_data,
     send_telegram_message,
     check_volume,
-    hull_moving_average,
     rsi,
+    bollinger_bands,
 )
 from binance.client import Client
 import config
@@ -25,7 +34,6 @@ DEBUG_MODE       = False
 MIN_VOLUME_USDT  = 2_000
 MIN_RSI_1H       = 50
 MAX_SPREAD_PCT   = 0.3        # % máximo entre best ask y best bid
-PRECRUCE_MAX_NEG = 0.001      # HMA puede estar hasta −0.1 % por debajo de EMA
 
 client = config.client  # Binance client global
 
@@ -53,27 +61,27 @@ async def _is_candidate(sym: str, state: dict) -> bool:
     if await _spread_pct(sym) > MAX_SPREAD_PCT:
         return False
 
-    # 3) Historicos 30 m
-    df30 = await get_historical_data(sym, "30m", 120)
-    if df30 is None or len(df30) < 60:
+    # 3) Históricos 30 m y ruptura BB superior
+    df30 = await get_historical_data(sym, "30m", 60)
+    if df30 is None or len(df30) < 25:
         return False
-    close30 = df30["close"].astype(float)
-    ema24   = close30.ewm(span=24).mean()
-    hma8    = hull_moving_average(close30, 8)
-
-    diff    = hma8.iloc[-1] - ema24.iloc[-1]
-    slope   = hma8.diff().iloc[-3:].mean()
-
-    # HMA por debajo pero muy cerca (<0.1 %) y subiendo
-    if not (diff < 0 and abs(diff)/close30.iloc[-1] <= PRECRUCE_MAX_NEG and slope > 0):
+    df30[["close", "volume"]] = df30[["close", "volume"]].astype(float)
+    close = df30["close"]
+    vol   = df30["volume"]
+    _, bb_up, _ = bollinger_bands(close, 20)
+    vol_avg = vol.rolling(20).mean()
+    if not (
+        close.iloc[-1] > bb_up.iloc[-1]
+        and vol.iloc[-1] >= 2 * vol_avg.iloc[-1]
+    ):
         return False
 
     # 4) RSI 1 h > 50 (momentum)
-    df1h = await get_historical_data(sym, Client.KLINE_INTERVAL_1HOUR, 120)
-    if df1h is None or len(df1h) < 30:
+    df1h = await get_historical_data(sym, Client.KLINE_INTERVAL_1HOUR, 60)
+    if df1h is None or len(df1h) < 20:
         return False
-    rsi1h_val = rsi(df1h["close"].astype(float), 14).iloc[-1]
-    if rsi1h_val <= MIN_RSI_1H:
+    rsi_val = rsi(df1h["close"].astype(float), 14).iloc[-1]
+    if rsi_val <= MIN_RSI_1H:
         return False
 
     # 5) Tendencia 4 h alcista (EMA50 ascendente)

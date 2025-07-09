@@ -1,3 +1,11 @@
+
+"""Funciones auxiliares para el bot.
+
+Contiene indicadores técnicos, wrappers de Binance con control de
+concurrencia y un sistema antiflood para Telegram.  Se implementan
+pequeños cachés con TTL para reducir peticiones repetitivas.
+"""
+
 # utils.py – indicadores, Binance helpers y antiflood Telegram
 # ============================================================
 
@@ -6,7 +14,21 @@ import pandas as pd
 import numpy as np
 import telegram.error
 from binance import exceptions as bexc
-from config import client, logger, telegram_bot, TELEGRAM_CHAT_ID
+from config import (
+    client, logger, telegram_bot, TELEGRAM_CHAT_ID,
+    STOP_ABS_HIGH_FACTOR, STOP_ABS_HIGH_THRESHOLD,
+)
+
+# ─────────────────────────────────────────────────────────────
+#  Cachés simples con TTL
+# ─────────────────────────────────────────────────────────────
+
+_SYMBOLS_CACHE: dict[str, tuple[float, list[str]]] = {}
+_HIST_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
+
+# TTL por defecto
+SYMBOLS_TTL = 1800  # seg – listado de pares USDT
+HIST_TTL    = 120   # seg – históricos de precios
 
 # ─────────────────────────────────────────────────────────────
 #  Antiflood Telegram
@@ -47,14 +69,20 @@ async def _bin_sem() -> asyncio.Semaphore:
 # ─────────────────────────────────────────────────────────────
 #  Binance helpers
 # ─────────────────────────────────────────────────────────────
-async def get_all_usdt_symbols():
+async def get_all_usdt_symbols(ttl: int = SYMBOLS_TTL) -> list[str]:
+    """Lista de pares *USDT* filtrados. Usa caché con TTL en segundos."""
+    now = asyncio.get_event_loop().time()
+    ts, cached = _SYMBOLS_CACHE.get("ts", 0.0), _SYMBOLS_CACHE.get("data")
+    if cached and now - ts < ttl:
+        return cached
+
     async with await _bin_sem():
         info = await asyncio.to_thread(client.get_exchange_info)
 
     excluded = {"BUSD", "USDC", "TUSD", "EUR", "AUD", "BRL", "IDRT",
                 "PAX", "USDP", "DAI", "XUSD", "USD1", "VIDT", "FDUSD"}
 
-    return [
+    symbols = [
         s["symbol"] for s in info["symbols"]
         if (
             s["status"] == "TRADING"
@@ -63,8 +91,20 @@ async def get_all_usdt_symbols():
             and s["baseAsset"] not in excluded
         )
     ]
+    _SYMBOLS_CACHE["ts"] = now
+    _SYMBOLS_CACHE["data"] = symbols
+    return symbols
 
-async def get_historical_data(symbol: str, interval: str, limit: int = 100):
+async def get_historical_data(symbol: str, interval: str, limit: int = 100,
+                              ttl: int = HIST_TTL) -> pd.DataFrame | None:
+    """Obtiene klines de Binance usando caché con TTL."""
+    key = (symbol, interval, limit)
+    now = asyncio.get_event_loop().time()
+    if key in _HIST_CACHE:
+        ts, cached = _HIST_CACHE[key]
+        if now - ts < ttl:
+            return cached
+
     try:
         async with await _bin_sem():
             klines = await asyncio.to_thread(
@@ -83,6 +123,7 @@ async def get_historical_data(symbol: str, interval: str, limit: int = 100):
         )
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         df.set_index("open_time", inplace=True)
+        _HIST_CACHE[key] = (now, df)
         return df
 
     except bexc.BinanceAPIException as e:
@@ -123,6 +164,54 @@ def rsi(series, period: int = 14):
     avg_l = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_g / avg_l
     return 100 - 100 / (1 + rs)
+
+def bollinger_bands(series: pd.Series, window: int = 20, num_std: float = 2.0):
+    """Devuelve (media, banda_superior, banda_inferior)."""
+    ma = series.rolling(window).mean()
+    std = series.rolling(window).std()
+    upper = ma + num_std * std
+    lower = ma - num_std * std
+    return ma, upper, lower
+
+# ─────────────────────────────────────────────────────────────
+#  Stops y triggers
+# ─────────────────────────────────────────────────────────────
+def atr_stop(df: pd.DataFrame, price: float, mult: float = 1.2, period: int = 14) -> float:
+    """Calcula stop basado en ATR para ``price``."""
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift()).abs(),
+        (df["low"] - df["close"].shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return price - mult * atr
+
+def trailing_atr_trigger(rec: dict, last: float, buffer: float) -> bool:
+    """Actualiza ``rec['stop']`` y devuelve ``True`` si se activa."""
+    if last > rec["entry_price"] + buffer:
+        rec["stop"] = max(rec["stop"], last - buffer)
+    return last < rec["stop"]
+
+def delta_stop_trigger(rec: dict, last: float, delta_usdt: float) -> bool:
+    """Devuelve ``True`` si el precio cae más de ``delta_usdt`` desde el máximo."""
+    return last < rec["max_price"] - delta_usdt
+
+def absolute_stop_trigger(qty: float, last: float, stop_abs_usdt: float) -> bool:
+    """Devuelve ``True`` si el valor de la posición es menor que ``stop_abs_usdt``."""
+    return qty * last < stop_abs_usdt
+
+def update_light_stops(rec: dict, qty: float, price: float,
+                       stop_delta_usdt: float, stop_abs_usdt: float) -> bool:
+    """Actualiza max_value, Δ-stop y stop_abs. Devuelve ``True`` si se activa."""
+    value = qty * price
+    rec["max_value"] = max(rec.get("max_value", 0.0), value)
+    rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
+    rec["stop_abs"] = (
+        STOP_ABS_HIGH_FACTOR * qty
+        if price >= STOP_ABS_HIGH_THRESHOLD
+        else stop_abs_usdt
+    )
+    return value < rec["stop_delta"] or value < rec["stop_abs"]
 
 # ─────────────────────────────────────────────────────────────
 #  LOT_SIZE helper (stepSize cache)

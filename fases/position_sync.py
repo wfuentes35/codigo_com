@@ -14,30 +14,35 @@ import config                    # ← leer valores en caliente
 from binance import exceptions as bexc
 from binance.helpers import round_step_size
 from config import (
-    logger, telegram_bot, TELEGRAM_CHAT_ID,
-    MIN_SYNC_USDT,
+    logger, MIN_SYNC_USDT, DRY_RUN,
 )
-from utils import get_all_usdt_symbols, get_step_size
+from utils import (
+    get_all_usdt_symbols, get_step_size, send_telegram_message, update_light_stops
+)
 from fases.fase3 import phase3_search_new_candidates
 
 _BIN_SEM = asyncio.Semaphore(3)
 
-async def asset_ok(asset: str) -> bool:
-    """Comprueba rápidamente si *assetUSDT* está listado en Binance."""
-    _valid = {s[:-4] for s in await get_all_usdt_symbols()}
-    return asset in _valid
+def asset_ok(asset: str, valid_assets: set[str]) -> bool:
+    """Comprueba si *assetUSDT* está listado en Binance usando un set previo."""
+    return asset in valid_assets
 def _ensure_int(x):
     assert isinstance(x, int), "freed slots debe ser int"
     return x
 # ----------------------------------------------------------------------
 async def sync_positions(state: dict, client, exclusion_dict: dict, interval: int = 900):
-    """Loop de sincronización con trailing y stops dinámicos."""
+    """Sincroniza balances en tiempo real.
+
+    Aplica trailing con ``update_light_stops`` y vende cuando se activa un stop.
+    ``state`` es un diccionario compartido con Fase 2.
+    """
     while True:
         await PAUSED.wait()                     # ← respeta /pausa
         if SHUTTING_DOWN.is_set():              # ← sale en /apagar
             break
         try:
             account = await asyncio.to_thread(client.get_account)
+            valid_assets = {s[:-4] for s in await get_all_usdt_symbols()}
 
             # -- recorrer balances --
             for bal in account["balances"]:
@@ -49,7 +54,7 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 symbol = f"{asset}USDT"
 
                 # limpiar si posición vacía
-                if qty == 0 or not await asset_ok(asset):
+                if qty == 0 or not asset_ok(asset, valid_assets):
                     if not (isinstance(state.get(symbol), str) and state[symbol].startswith("RESERVADA")):
                         state.pop(symbol, None)
                     continue
@@ -76,17 +81,16 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 # -------- posición ya sincronizada --------
                 if rec and isinstance(rec, dict):
                     if light_mode:
-                        rec["max_value"]  = max(rec.get("max_value", 0.0), current_value)
-                        rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
-                        rec["stop_abs"]   = 51.0 * qty if price >= 55 else stop_abs_usdt
+                        triggered = update_light_stops(
+                            rec, qty, price, stop_delta_usdt, stop_abs_usdt
+                        )
 
-                        # trigger de stop
-                        if current_value < rec["stop_delta"] or current_value < rec["stop_abs"]:
+                        if triggered:
                             msg = (
                                 f"🚨 STOP(sync) {symbol} • value={current_value:.2f} USDT / "
                                 f"Δ={rec['stop_delta']:.2f} • abs={rec['stop_abs']:.2f}"
                             )
-                            await telegram_bot.send_message(TELEGRAM_CHAT_ID, msg)
+                            await send_telegram_message(msg)
                             logger.info(msg)
 
                             # vender
@@ -94,10 +98,36 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                 step = await get_step_size(symbol)
                                 qty_sell = round_step_size(qty, step)
                                 try:
-                                    await asyncio.to_thread(
-                                        client.create_order,
-                                        symbol=symbol, side="SELL", type="MARKET",
-                                        quantity=qty_sell,
+                                    if not DRY_RUN:
+                                        sell = await asyncio.to_thread(
+                                            client.create_order,
+                                            symbol=symbol,
+                                            side="SELL",
+                                            type="MARKET",
+                                            quantity=qty_sell,
+                                        )
+                                        value = float(sell.get("cummulativeQuoteQty", 0.0))
+                                        fee = 0.0
+                                        for f in sell.get("fills", []):
+                                            comm = float(f["commission"])
+                                            if f["commissionAsset"] == "USDT":
+                                                fee += comm
+                                            elif f["commissionAsset"] == "BNB":
+                                                price_bnb = float((await asyncio.to_thread(
+                                                    client.get_symbol_ticker,
+                                                    symbol="BNBUSDT",
+                                                ))["price"])
+                                                fee += comm * price_bnb
+                                            else:
+                                                fee += comm * float(f["price"])
+                                    else:
+                                        value = price * qty_sell
+                                        fee = 0.0
+                                    pnl = value - fee - rec.get("entry_value", current_value)
+                                    pct = 100 * pnl / rec.get("entry_value", current_value)
+                                    await send_telegram_message(
+                                        f"💰 VENTA sync {symbol} @ {value/qty_sell:.4f}\n"
+                                        f"📊 PnL: {pnl:.3f} USDT ({pct:.2f}%)"
                                     )
                                 except Exception:
                                     logger.exception(f"Venta sync {symbol} falló")
@@ -117,9 +147,8 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                     "stop_delta":  current_value - stop_delta_usdt,
                     "stop_abs":    stop_abs_usdt,
                 }
-                await telegram_bot.send_message(
-                    TELEGRAM_CHAT_ID,
-                    f"📡 Sincronizada {symbol} • value={current_value:.2f} USDT",
+                await send_telegram_message(
+                    f"📡 Sincronizada {symbol} • value={current_value:.2f} USDT"
                 )
         except Exception:
             logger.exception("[sync] crash")

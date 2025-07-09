@@ -1,6 +1,13 @@
-# fases/fase2.py – Compra tras cruce HMA‑8 ↑ EMA‑24, trailing, PnL real y salida por cruce bajista
+# fases/fase2.py – Estrategia ruptura BB + pullback
 # =================================================================================================
 # Archivo completo. Sustituye tu fases/fase2.py por este contenido.
+"""Fase 2 – ejecución y gestión de operaciones.
+
+Espera una ruptura de la banda superior de Bollinger con alto volumen, compra
+en el retroceso a la zona entre esa banda y la EMA(9) y vende cuando el precio
+cierra por debajo de dicha EMA o se activan los distintos stops.  Reporta el
+PnL real o simulado vía Telegram.
+"""
 
 import config, asyncio, pandas as pd
 from config import PAUSED, SHUTTING_DOWN
@@ -10,17 +17,16 @@ from binance import exceptions as bexc
 from binance.exceptions import BinanceAPIException
 from config import (
     logger, DRY_RUN, TRAILING_USDT, LIGHT_MODE,
-    EMA_SHORT, EMA_LONG, KLINE_INTERVAL_FASE2, CHECK_INTERVAL,
+    KLINE_INTERVAL_FASE2, CHECK_INTERVAL,
 )
 from utils import (
-    get_historical_data, send_telegram_message, hull_moving_average, rsi,
-    get_step_size,
+    get_historical_data, send_telegram_message, rsi, bollinger_bands,
+    get_step_size, atr_stop, trailing_atr_trigger, delta_stop_trigger,
+    absolute_stop_trigger,
 )
 from fases.fase3 import phase3_replenish
 
 # ───── Parámetros ────────────────────────────────────────────────────────
-CRUCE_MAX_BARS = 3               # velas máximo desde el cruce para comprar
-SLOPE_BARS     = 2               # barras positivas requeridas en la EMA
 TREND_TF       = Client.KLINE_INTERVAL_2HOUR
 TREND_PERIOD   = 50
 STOP_ATR_MULT  = 1.2             # trailing ATR cuando LIGHT_MODE=False
@@ -45,20 +51,9 @@ async def _fee_to_usdt(client, fills, quote="USDT") -> float:
 
 # ───── Helpers técnicos ─────────────────────────────────────────────────
 
-def ema_slope_positive(series: pd.Series, bars=SLOPE_BARS) -> bool:
-    return (series.diff().tail(bars) > 0).all()
-
+# devuelve True si la EMA de mayor tiempo está en tendencia alcista
 def ema_htf_up(close: pd.Series) -> bool:
     return close.ewm(span=TREND_PERIOD).mean().diff().iloc[-1] > 0
-
-def atr_stop(df: pd.DataFrame, price: float) -> float:
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - df["close"].shift()).abs(),
-        (df["low"]  - df["close"].shift()).abs(),
-    ], axis=1).max(axis=1)
-    atr = tr.rolling(14).mean().iloc[-1]
-    return price - STOP_ATR_MULT * atr
 
 # ───── Market BUY wrapper ───────────────────────────────────────────────
 async def _buy_market(sym, client, usdt, hint_price):
@@ -86,54 +81,63 @@ async def _buy_market(sym, client, usdt, hint_price):
     return dict(qty=qty, price=price, entry_cost=cost+fee, commission=fee)
 # ───── Evaluador por símbolo ────────────────────────────────────────────
 async def _evaluate(sym, state, client, freed):
+    """Gestiona entrada y salida individual de ``sym``."""
+
     rec = state.get(sym)
 
     # -------- ENTRADA --------
     if isinstance(rec, str) and rec.startswith("RESERVADA"):
-        df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 200)
-        if df is None or len(df) < 100:
+        df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 60)
+        if df is None or len(df) < 25:
             return
-        close = df["close"].astype(float)
-        ema24 = close.ewm(span=EMA_LONG).mean()
-        hma8  = hull_moving_average(close, EMA_SHORT)
+        df[["open", "high", "low", "close", "volume"]] = (
+            df[["open", "high", "low", "close", "volume"]].astype(float)
+        )
+        close = df["close"]
+        volume = df["volume"]
+        low = df["low"]
+        ema9 = close.ewm(span=9).mean()
+        _, bb_up, _ = bollinger_bands(close, 20)
+        vol_avg = volume.rolling(20).mean()
         rsi14 = rsi(close, 14)
 
-        diff  = hma8 - ema24
-        cross = (diff > 0) & (diff.shift(1) <= 0)
-        if not cross.any():
-            return
-        bars_since = len(df)-1 - df.index.get_loc(cross[cross].index[-1])
-        if bars_since > CRUCE_MAX_BARS:
-            if diff.iloc[-1] > 0:
-                state.pop(sym, None)
-            return
-        if not ema_slope_positive(ema24):
-            return
-        d_htf = await get_historical_data(sym, TREND_TF, 120)
-        if d_htf is None or not ema_htf_up(d_htf["close"]):
-            return
-        if rsi14.iloc[-1] <= 50:
-            return
+        breakout = (
+            close.iloc[-2] > bb_up.iloc[-2]
+            and volume.iloc[-2] >= 2 * vol_avg.iloc[-2]
+            and rsi14.iloc[-2] > 50
+        )
 
-        trade = await _buy_market(sym, client, config.MIN_ENTRY_USDT, close.iloc[-1])
-        if trade is None:          # fallo por saldo
-            state.pop(sym, None)   # quita el símbolo y sigue
+        pullback = (
+            low.iloc[-1] <= bb_up.iloc[-2]
+            and close.iloc[-1] >= ema9.iloc[-1]
+            and close.iloc[-1] > df["open"].iloc[-1]
+        )
+
+        d_htf = await get_historical_data(sym, TREND_TF, 120)
+        trend_ok = d_htf is not None and ema_htf_up(d_htf["close"].astype(float))
+
+        if breakout and pullback and trend_ok:
+            trade = await _buy_market(sym, client, config.MIN_ENTRY_USDT, close.iloc[-1])
+            if trade is None:
+                state.pop(sym, None)
+                return
+            state[sym] = dict(
+                status="COMPRADA",
+                entry_price=trade["price"],
+                entry_cost=trade["entry_cost"],
+                quantity=trade["qty"],
+                stop=atr_stop(df, trade["price"], STOP_ATR_MULT),
+                max_price=trade["price"],
+                commission=trade["commission"],
+            )
+            await send_telegram_message(
+                f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
+                f"🧾 Coste total: {trade['entry_cost']:.2f} USDT (Fee {trade['commission']:.4f})"
+            )
+            logger.info(
+                f"BUY {sym} qty={trade['qty']} price={trade['price']} cost={trade['entry_cost']}"
+            )
             return
-        state[sym] = dict(
-            status="COMPRADA",
-            entry_price=trade["price"],
-            entry_cost=trade["entry_cost"],
-            quantity=trade["qty"],
-            stop=atr_stop(df, trade["price"]),
-            max_price=trade["price"],
-            commission=trade["commission"],
-        )
-        await send_telegram_message(
-            f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
-            f"🧾 Coste total: {trade['entry_cost']:.2f} USDT (Fee {trade['commission']:.4f})"
-        )
-        logger.info(f"BUY {sym} qty={trade['qty']} price={trade['price']} cost={trade['entry_cost']}")
-        return
 
     # -------- GESTIÓN --------
     if isinstance(rec, dict) and rec["status"].startswith("COMPRADA"):
@@ -143,29 +147,24 @@ async def _evaluate(sym, state, client, freed):
         last = float(df["close"].iloc[-1])
         rec["max_price"] = max(rec.get("max_price", rec["entry_price"]), last)
 
-        # Salida por cruce bajista
         close = df["close"].astype(float)
-        ema24 = close.ewm(span=EMA_LONG).mean()
-        hma8  = hull_moving_average(close, EMA_SHORT)
-        if hma8.iloc[-1] - ema24.iloc[-1] <= 0 and hma8.iloc[-2] - ema24.iloc[-2] > 0:
-            await send_telegram_message(f"🚨 CROSS-EXIT {sym} cruce bajista @ {last:.4f}")
+        ema9 = close.ewm(span=9).mean()
+        if close.iloc[-1] < ema9.iloc[-1]:
+            await send_telegram_message(f"🚨 EMA9-EXIT {sym} @ {last:.4f}")
             freed.append(sym)
 
         # Trailing ATR
-        if not LIGHT_MODE:
-            if last > rec["entry_price"] + TRAILING_USDT:
-                rec["stop"] = max(rec["stop"], last - TRAILING_USDT)
-            if last < rec["stop"]:
-                await send_telegram_message(f"🚨 STOP {sym} @ {last:.4f}")
-                freed.append(sym)
+        if not LIGHT_MODE and trailing_atr_trigger(rec, last, TRAILING_USDT):
+            await send_telegram_message(f"🚨 STOP {sym} @ {last:.4f}")
+            freed.append(sym)
 
         # Δ-stop
-        if last < rec["max_price"] - config.STOP_DELTA_USDT:
+        if delta_stop_trigger(rec, last, config.STOP_DELTA_USDT):
             await send_telegram_message(f"🚨 Δ-STOP {sym} @ {last:.4f}")
             freed.append(sym)
 
         # stop absoluto
-        if last * rec["quantity"] < config.STOP_ABS_USDT:
+        if absolute_stop_trigger(rec["quantity"], last, config.STOP_ABS_USDT):
             await send_telegram_message(f"🚨 ABS-STOP {sym} @ {last:.4f}")
             freed.append(sym)
 
