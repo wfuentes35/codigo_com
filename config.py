@@ -63,7 +63,7 @@ CVD_MIN          = 0
 # ───── K-line intervalos ────────────────────────────────────────────
 KLINE_INTERVAL_FASE0 = Client.KLINE_INTERVAL_15MINUTE
 KLINE_INTERVAL_FASE1 = Client.KLINE_INTERVAL_4HOUR
-KLINE_INTERVAL_FASE2 = Client.KLINE_INTERVAL_30MINUTE
+KLINE_INTERVAL_FASE2 = Client.KLINE_INTERVAL_4HOUR
 # ─────────────────────────────────────────────────────────────
 #  Ajustes DINÁMICOS (modificables vía Telegram) – Fase 0 y tamaño entrada
 # ─────────────────────────────────────────────────────────────
