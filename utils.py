@@ -172,6 +172,28 @@ def get_ema(series: pd.Series, period: int = 9) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
 
 
+def hull_moving_average(series: pd.Series, period: int = 9) -> pd.Series:
+    """Hull Moving Average."""
+    if period < 1:
+        raise ValueError("period must be positive")
+
+    def _wma(s: pd.Series, length: int) -> pd.Series:
+        weights = np.arange(1, length + 1)
+        return s.rolling(length).apply(
+            lambda x: np.dot(x, weights) / weights.sum(),
+            raw=True,
+        )
+
+    half = int(period / 2)
+    sqrt_len = int(np.sqrt(period))
+
+    wma_half = _wma(series, half)
+    wma_full = _wma(series, period)
+
+    hma_base = 2 * wma_half - wma_full
+    return _wma(hma_base, sqrt_len)
+
+
 def get_volume_avg(volume_series: pd.Series, period: int = 20) -> float:
     """Volumen promedio de ``period`` barras."""
     if len(volume_series) < period:
