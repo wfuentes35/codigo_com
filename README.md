@@ -34,7 +34,7 @@ Se requieren al menos las siguientes variables:
 - `BINANCE_API_KEY` y `BINANCE_API_SECRET`
 - `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`
 
-Opcionalmente pueden definirse claves adicionales para `signals.py` con el
+Opcionalmente pueden definirse claves adicionales por cuenta con el
 prefijo `BINANCE_API_KEY_<CUENTA>_spot`.
 
 ## Licencia

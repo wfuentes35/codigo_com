@@ -133,14 +133,6 @@ async def get_historical_data(symbol: str, interval: str, limit: int = 100,
 
     return None
 
-async def check_volume(symbol: str, min_usdt: float = 300) -> bool:
-    try:
-        async with await _bin_sem():
-            ticker = await asyncio.to_thread(client.get_ticker, symbol=symbol)
-        return float(ticker["quoteVolume"]) > min_usdt
-    except Exception as e:
-        logger.error(f"Volumen {symbol}: {e}")
-        return False
 
 # ─────────────────────────────────────────────────────────────
 #  Indicadores técnicos
@@ -237,9 +229,3 @@ async def get_step_size(symbol: str) -> float:
 
     return _STEP_CACHE.get(symbol, 0.000001)
 
-# ─────────────────────────────────────────────────────────────
-#  Compat: save_log() usado por fase1/fase3
-# ─────────────────────────────────────────────────────────────
-def save_log(message: str) -> None:
-    """Wrapper simple para mantener compatibilidad con fase1/3."""
-    logger.info(message)

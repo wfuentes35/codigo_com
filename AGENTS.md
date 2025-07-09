@@ -31,10 +31,8 @@ Tu misión es **mejorar, depurar, documentar y optimizar el sistema**, asegurand
 ├── main.py ← orquestador
 ├── config.py ← parámetros globales
 ├── run_bot.sh ← bucle en tmux
-├── signals.py ← compra/venta por cuenta
 ├── telegram_commands.py ← comandos /pausa /set /add ...
 ├── utils.py ← indicadores + Binance helpers
-├── utils_quant.py ← filtros cuantitativos (ETA)
 ├── fases/
 │ ├── fase0_precross.py ← pre-cruce HMA/EMA
 │ ├── fase0_cross15m.py ← confirmación cruce
@@ -61,7 +59,6 @@ Editar
 - Fase 3 → repone candidatos cuando se liberan
 - `position_sync.py` mantiene actualizados los estados reales
 - `telegram_commands.py` permite modificar parámetros en caliente
-- `signals.py` ejecuta órdenes individuales por cuenta
 
 ---
 
@@ -75,7 +72,7 @@ BINANCE_API_SECRET=tu_secreto
 TELEGRAM_BOT_TOKEN=token_telegram
 TELEGRAM_CHAT_ID=tu_chat_id
 
-# Por cuenta si se usan múltiples en signals.py
+# Por cuenta si se usan múltiples
 BINANCE_API_KEY_CUENTA1_spot=...
 BINANCE_API_SECRET_CUENTA1_spot=...
 
