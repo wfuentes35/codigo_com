@@ -2,8 +2,13 @@
 import asyncio, time, numpy as np, logging
 from binance.client import Client
 from config import (
-    MIN_24H_VOL_USDT, EMA_SHORT, EMA_LONG, ETA_MAX_BARS,
-    RVOL_MIN, CVD_MIN, TELEGRAM_CHAT_ID
+    MIN_24H_VOL_USDT,
+    EMA_SHORT,
+    EMA_LONG,
+    ETA_MAX_BARS,
+    RVOL_MIN,
+    CVD_MIN,
+    TELEGRAM_CHAT_ID,
 )
 from utils import send_telegram_message  # re‑usa helper sync
 
@@ -66,5 +71,4 @@ async def is_quant_candidate(symbol: str) -> bool:
     if df["volume"].iloc[-1] < df["volume"].iloc[-20:-1].mean()*RVOL_MIN:
         return False
     if await aggtrade_delta(symbol) < CVD_MIN:
-        return False
-    return True
+        return False    return True
