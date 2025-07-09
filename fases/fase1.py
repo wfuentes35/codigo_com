@@ -1,13 +1,10 @@
 
 """Fase 1 – Búsqueda de precandidatos.
-
 Escanea todos los pares USDT en marco 30m buscando velas que cierren por encima
 de la banda superior de Bollinger con volumen alto.  Los símbolos válidos se
 marcan como ``RESERVADA_PRE`` para que Fase 2 espere el pullback y ejecute la
 entrada.
-"""
 
-# fases/fase1.py – Precandidato Scanner (ruptura BB + volumen)
 # -----------------------------------------------------------------
 # Selecciona pares USDT cuya última vela de 30 m ha cerrado sobre la banda
 # superior de Bollinger con el doble de volumen que el promedio.  Se marcan como

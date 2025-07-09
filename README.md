@@ -2,8 +2,8 @@
 
 Bot asincrónico para trading spot en Binance.  Utiliza una estrategia en varias fases:
 
-1. **Fase 1** detecta rupturas de la banda superior de Bollinger con volumen elevado y marca los símbolos como precandidatos.
-2. **Fase 2** espera un pullback a la zona entre esa banda y la EMA(9), compra tras el rebote y gestiona la posición con trailing ATR, Δ‑stop y stop absoluto.
+1. **Fase 1** escanea todos los pares USDT en busca de pre‑cruces de medias.  
+2. **Fase 2** confirma el cruce HMA‑8/EMA‑24, compra y gestiona la posición con trailing por ATR, Δ‑stop y stop absoluto.
 3. **Fase 3** repone candidatos cuando hay huecos disponibles.
 4. **Sync** mantiene el estado real de las posiciones y aplica stops en modo
    liviano cuando se opera desde otro dispositivo.

@@ -3,11 +3,11 @@
 # Archivo completo. Sustituye tu fases/fase2.py por este contenido.
 """Fase 2 – ejecución y gestión de operaciones.
 
+
 Espera una ruptura de la banda superior de Bollinger con alto volumen, compra
 en el retroceso a la zona entre esa banda y la EMA(9) y vende cuando el precio
 cierra por debajo de dicha EMA o se activan los distintos stops.  Reporta el
 PnL real o simulado vía Telegram.
-"""
 
 import config, asyncio, pandas as pd
 from config import PAUSED, SHUTTING_DOWN
@@ -20,6 +20,7 @@ from config import (
     KLINE_INTERVAL_FASE2, CHECK_INTERVAL,
 )
 from utils import (
+
     get_historical_data, send_telegram_message, rsi, bollinger_bands,
     get_step_size, atr_stop, trailing_atr_trigger, delta_stop_trigger,
     absolute_stop_trigger,
@@ -50,6 +51,8 @@ async def _fee_to_usdt(client, fills, quote="USDT") -> float:
     return total
 
 # ───── Helpers técnicos ─────────────────────────────────────────────────
+def ema_slope_positive(series: pd.Series, bars=SLOPE_BARS) -> bool:
+    return (series.diff().tail(bars) > 0).all()
 
 # devuelve True si la EMA de mayor tiempo está en tendencia alcista
 def ema_htf_up(close: pd.Series) -> bool:
@@ -138,6 +141,7 @@ async def _evaluate(sym, state, client, freed):
                 f"BUY {sym} qty={trade['qty']} price={trade['price']} cost={trade['entry_cost']}"
             )
             return
+
 
     # -------- GESTIÓN --------
     if isinstance(rec, dict) and rec["status"].startswith("COMPRADA"):

@@ -30,6 +30,7 @@ _HIST_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
 SYMBOLS_TTL = 1800  # seg – listado de pares USDT
 HIST_TTL    = 120   # seg – históricos de precios
 
+
 # ─────────────────────────────────────────────────────────────
 #  Antiflood Telegram
 # ─────────────────────────────────────────────────────────────
@@ -172,6 +173,46 @@ def bollinger_bands(series: pd.Series, window: int = 20, num_std: float = 2.0):
     upper = ma + num_std * std
     lower = ma - num_std * std
     return ma, upper, lower
+
+# ─────────────────────────────────────────────────────────────
+#  Stops y triggers
+# ─────────────────────────────────────────────────────────────
+def atr_stop(df: pd.DataFrame, price: float, mult: float = 1.2, period: int = 14) -> float:
+    """Calcula stop basado en ATR para ``price``."""
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift()).abs(),
+        (df["low"] - df["close"].shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return price - mult * atr
+
+def trailing_atr_trigger(rec: dict, last: float, buffer: float) -> bool:
+    """Actualiza ``rec['stop']`` y devuelve ``True`` si se activa."""
+    if last > rec["entry_price"] + buffer:
+        rec["stop"] = max(rec["stop"], last - buffer)
+    return last < rec["stop"]
+
+def delta_stop_trigger(rec: dict, last: float, delta_usdt: float) -> bool:
+    """Devuelve ``True`` si el precio cae más de ``delta_usdt`` desde el máximo."""
+    return last < rec["max_price"] - delta_usdt
+
+def absolute_stop_trigger(qty: float, last: float, stop_abs_usdt: float) -> bool:
+    """Devuelve ``True`` si el valor de la posición es menor que ``stop_abs_usdt``."""
+    return qty * last < stop_abs_usdt
+
+def update_light_stops(rec: dict, qty: float, price: float,
+                       stop_delta_usdt: float, stop_abs_usdt: float) -> bool:
+    """Actualiza max_value, Δ-stop y stop_abs. Devuelve ``True`` si se activa."""
+    value = qty * price
+    rec["max_value"] = max(rec.get("max_value", 0.0), value)
+    rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
+    rec["stop_abs"] = (
+        STOP_ABS_HIGH_FACTOR * qty
+        if price >= STOP_ABS_HIGH_THRESHOLD
+        else stop_abs_usdt
+    )
+    return value < rec["stop_delta"] or value < rec["stop_abs"]
 
 # ─────────────────────────────────────────────────────────────
 #  Stops y triggers
