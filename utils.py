@@ -2,7 +2,7 @@
 """Funciones auxiliares para el bot.
 
 Contiene indicadores técnicos, wrappers de Binance con control de
-concurrencia y un sistema antiflood para Telegram.  Se implementan
+concurrencia y un sistema antiflood para Telegram. Se implementan
 pequeños cachés con TTL para reducir peticiones repetitivas.
 """
 
@@ -28,18 +28,7 @@ _HIST_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
 
 # TTL por defecto
 SYMBOLS_TTL = 1800  # seg – listado de pares USDT
-HIST_TTL    = 120   # seg – históricos de precios
-
-# ─────────────────────────────────────────────────────────────
-#  Cachés simples con TTL
-# ─────────────────────────────────────────────────────────────
-
-_SYMBOLS_CACHE: dict[str, tuple[float, list[str]]] = {}
-_HIST_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
-
-# TTL por defecto
-SYMBOLS_TTL = 1800  # seg – listado de pares USDT
-HIST_TTL    = 120   # seg – históricos de precios
+HIST_TTL = 120      # seg – históricos de precios
 
 # ─────────────────────────────────────────────────────────────
 #  Antiflood Telegram

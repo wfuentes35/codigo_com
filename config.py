@@ -55,6 +55,10 @@ COOLDOWN_CANDLES         = 2
 # EMA / HMA
 EMA_SHORT  = 8
 EMA_LONG   = 24
+MIN_24H_VOL_USDT = 5_000_000
+ETA_MAX_BARS     = 12
+RVOL_MIN         = 2.0
+CVD_MIN          = 0
 
 # ───── K-line intervalos ────────────────────────────────────────────
 KLINE_INTERVAL_FASE0 = Client.KLINE_INTERVAL_15MINUTE
