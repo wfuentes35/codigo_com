@@ -145,25 +145,38 @@ async def check_volume(symbol: str, min_usdt: float = 300) -> bool:
 # ─────────────────────────────────────────────────────────────
 #  Indicadores técnicos
 # ─────────────────────────────────────────────────────────────
-def hull_moving_average(series, window: int):
-    def wma(x, n):
-        weights = np.arange(1, n + 1)
-        return x.rolling(n).apply(
-            lambda v: np.dot(v, weights) / weights.sum(), raw=True
-        )
 
-    half_w = max(1, window // 2)
-    root_w = max(1, int(np.sqrt(window)))
-    return wma(2 * wma(series, half_w) - wma(series, window), root_w)
+def get_bollinger_bands(series: pd.Series, period: int = 20,
+                        stddev: float = 2) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Devuelve bandas de Bollinger superior, media e inferior."""
+    ma = series.rolling(period).mean()
+    std = series.rolling(period).std()
+    upper = ma + stddev * std
+    lower = ma - stddev * std
+    return upper, ma, lower
 
-def rsi(series, period: int = 14):
+
+def get_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Índice de fuerza relativa."""
     delta = series.diff()
-    gain  = delta.clip(lower=0)
-    loss  = -delta.clip(upper=0)
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
     avg_g = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     avg_l = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_g / avg_l
     return 100 - 100 / (1 + rs)
+
+
+def get_ema(series: pd.Series, period: int = 9) -> pd.Series:
+    """Exponential Moving Average."""
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def get_volume_avg(volume_series: pd.Series, period: int = 20) -> float:
+    """Volumen promedio de ``period`` barras."""
+    if len(volume_series) < period:
+        return float(volume_series.mean())
+    return float(volume_series.tail(period).mean())
 
 # ─────────────────────────────────────────────────────────────
 #  Stops y triggers

@@ -27,8 +27,6 @@ async def supervise(coro_factory, *args):
 from telegram_commands import build_telegram_app
 
 # fases
-from fases.fase0_precross import phase0_precross
-from fases.fase0_cross15m import phase0_cross15m
 from fases.fase1 import phase1_search_20_candidates
 from fases.fase2 import phase2_monitor
 from fases.position_sync import sync_positions
@@ -52,12 +50,9 @@ async def main():
     asyncio.create_task(app.updater.start_polling())
 
     asyncio.create_task(supervise(watch_manual_file, state_dict, exclusion_dict))
-    asyncio.create_task(supervise(phase0_precross, state_dict))
-    asyncio.create_task(supervise(phase0_cross15m, state_dict))
     asyncio.create_task(delayed_sync())
     asyncio.create_task(supervise(phase2_monitor, state_dict, client, exclusion_dict))
-
-    await phase1_search_20_candidates(state_dict)
+    asyncio.create_task(supervise(phase1_search_20_candidates, state_dict))
 
     # Heart-beat
     while not SHUTTING_DOWN.is_set():
