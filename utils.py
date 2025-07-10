@@ -10,8 +10,10 @@ pequeños cachés con TTL para reducir peticiones repetitivas.
 # ============================================================
 
 import asyncio
-import pandas as pd
+from typing import Optional
+
 import numpy as np
+import pandas as pd
 import telegram.error
 from binance import exceptions as bexc
 from config import (
@@ -96,7 +98,7 @@ async def get_all_usdt_symbols(ttl: int = SYMBOLS_TTL) -> list[str]:
     return symbols
 
 async def get_historical_data(symbol: str, interval: str, limit: int = 100,
-                              ttl: int = HIST_TTL) -> pd.DataFrame | None:
+                              ttl: int = HIST_TTL) -> Optional[pd.DataFrame]:
     """Obtiene klines de Binance usando caché con TTL."""
     key = (symbol, interval, limit)
     now = asyncio.get_event_loop().time()
