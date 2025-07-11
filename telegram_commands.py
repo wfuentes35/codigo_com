@@ -15,9 +15,11 @@ from config import (
     FASE0_SETTINGS,
     update_fase0_setting,
     update_min_entry_usdt,
+    update_max_candidates,
+    MAX_CANDIDATOS_ACTIVOS,
 )
 
-from utils import get_step_size, send_telegram_message
+from utils import get_step_size, send_telegram_message, count_active_candidates
 from binance.helpers import round_step_size
 from binance import exceptions as bexc
 
@@ -138,12 +140,22 @@ def build_telegram_app(
         if not state_dict:
             return await update.message.reply_text("No hay símbolos en seguimiento.")
 
-        reservadas = [s for s, r in state_dict.items() if isinstance(r, str)]
-        compradas  = [(s, r) for s, r in state_dict.items() if isinstance(r, dict)]
+        candidatos = []
+        compradas  = []
+        for s, r in state_dict.items():
+            if isinstance(r, str) and r.startswith("RESERVADA"):
+                candidatos.append(s)
+            elif isinstance(r, dict) and r.get("status") == "RESERVADA_PRE":
+                candidatos.append(s)
+            elif isinstance(r, dict):
+                compradas.append((s, r))
 
         líneas = []
-        if reservadas:
-            líneas.append(f"🏆 Reservadas ({len(reservadas)}): " + ", ".join(reservadas))
+        if candidatos:
+            líneas.append(
+                f"🎯 {len(candidatos)}/{MAX_CANDIDATOS_ACTIVOS} candidatos activos:"
+            )
+            líneas.extend(candidatos)
 
         if compradas:
             líneas.append("💰 Posiciones sincronizadas:")
@@ -183,7 +195,8 @@ def build_telegram_app(
                 "  /set stop_abs   <usd>\n"
                 "  /set light on|off\n"
                 "  /set entry <usd>\n"
-                "  /set fase0 <interval|min_vol|min_ratio> <valor>"
+                "  /set fase0 <interval|min_vol|min_ratio> <valor>\n"
+                "  /set candidatos <n>\n"
                 "  /set dry on|off\n"
             )
         sub = ctx.args[0].lower()
@@ -236,6 +249,17 @@ def build_telegram_app(
             val = FASE0_SETTINGS.get(ctx.args[1], "?")
             msg = "❌ " + err if err else f"✅ Fase0 {ctx.args[1]} = {val}"
             return await update.message.reply_text(msg)
+
+        # límite de candidatos
+        if sub == "candidatos" and len(ctx.args) == 2:
+            err = update_max_candidates(ctx.args[1])
+            if err:
+                return await update.message.reply_text(f"❌ {err}")
+            await update.message.reply_text(
+                f"🔧 Máximo de candidatos actualizado a {MAX_CANDIDATOS_ACTIVOS}."
+            )
+            logger.info(f"/set candidatos {MAX_CANDIDATOS_ACTIVOS}")
+            return
         
         
 
