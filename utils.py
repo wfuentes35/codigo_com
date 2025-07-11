@@ -56,6 +56,23 @@ async def send_telegram_message(msg: str):
         await asyncio.sleep(2.5)
 
 # ─────────────────────────────────────────────────────────────
+#  Contadores y utilidades varias
+# ─────────────────────────────────────────────────────────────
+
+def count_active_candidates(state: dict) -> int:
+    """Cuenta símbolos en estado 'RESERVADA' o 'RESERVADA_PRE'."""
+    return sum(
+        1
+        for v in state.values()
+        if (
+            isinstance(v, str) and v.startswith("RESERVADA")
+        )
+        or (
+            isinstance(v, dict) and v.get("status") == "RESERVADA_PRE"
+        )
+    )
+
+# ─────────────────────────────────────────────────────────────
 #  Binance semáforo (un semáforo por event-loop)
 # ─────────────────────────────────────────────────────────────
 _BIN_SEM_BY_LOOP: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
