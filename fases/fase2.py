@@ -30,6 +30,12 @@ from fases.fase3 import phase3_replenish
 # ----------------------------------------------------------------------
 STOP_ATR_MULT = 1.2
 
+def _active_positions(state: dict) -> int:
+    return sum(
+        1 for r in state.values()
+        if isinstance(r, dict) and str(r.get("status", "")).startswith("COMPRADA")
+    )
+
 
 async def _fee_to_usdt(client, fills, quote="USDT") -> float:
     total = 0.0
@@ -80,6 +86,8 @@ async def _evaluate(sym, state, client, freed):
 
     # -------- ENTRADA --------
     if status == "RESERVADA_PRE":
+        if _active_positions(state) >= config.MAX_OPERACIONES_ACTIVAS:
+            return
         df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 60)
         if df is None or len(df) < 30:
             return

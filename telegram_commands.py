@@ -1,6 +1,6 @@
 # telegram_commands.py – control por Telegram
 # ==========================================
-import asyncio, os, sys, signal,config
+import asyncio, os, sys, signal, subprocess, config
 
 from telegram import Update
 from telegram.ext import (
@@ -15,6 +15,7 @@ from config import (
     FASE0_SETTINGS,
     update_fase0_setting,
     update_min_entry_usdt,
+    update_max_operaciones_activas,
 )
 
 from utils import get_step_size, send_telegram_message
@@ -167,6 +168,15 @@ def build_telegram_app(
                 )
         await update.message.reply_text("\n".join(líneas))
 
+    # ---------- /listar ----------
+    async def listar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        activos = [s for s, r in state_dict.items() if isinstance(r, dict)]
+        lines = [
+            f"🎯 {len(activos)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas:"
+        ]
+        lines += sorted(state_dict.keys()) or ["(sin candidatos)"]
+        await update.message.reply_text("\n".join(lines))
+
     # ---------- /fase3 ----------
     async def phase3_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         from fases.fase3 import phase3_search_new_candidates
@@ -242,10 +252,40 @@ def build_telegram_app(
 
         await update.message.reply_text("Parámetros incorrectos. Usa /set help")
 
+    # ---------- /maxcandidatos ----------
+    async def maxcandidatos_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not ctx.args:
+            return await update.message.reply_text(
+                f"Uso: /maxcandidatos <número> (actual {config.MAX_OPERACIONES_ACTIVAS})"
+            )
+        err = update_max_operaciones_activas(ctx.args[0])
+        if err:
+            return await update.message.reply_text(err)
+        await update.message.reply_text(
+            f"✅ MAX_OPERACIONES_ACTIVAS = {config.MAX_OPERACIONES_ACTIVAS}"
+        )
+
+    # ---------- /gitpull ----------
+    async def gitpull_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("⏳ Actualizando código…")
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "pull", "origin", "main"],
+            capture_output=True,
+            text=True,
+        )
+        out = (proc.stdout + proc.stderr).strip()
+        if out:
+            await update.message.reply_text(f"`{out}`", parse_mode="Markdown")
+        await restart_cmd(update, ctx)
+
     # ---------- registro ----------
     app.add_handler(CommandHandler("add",      add_cmd))
     app.add_handler(CommandHandler("elimina",  del_cmd))
     app.add_handler(CommandHandler("lista",    lista))
+    app.add_handler(CommandHandler("listar",   listar_cmd))
+    app.add_handler(CommandHandler("maxcandidatos", maxcandidatos_cmd))
+    app.add_handler(CommandHandler("gitpull",  gitpull_cmd))
     app.add_handler(CommandHandler("fase3",    phase3_cmd))
     app.add_handler(CommandHandler("set",      set_cmd))
 
