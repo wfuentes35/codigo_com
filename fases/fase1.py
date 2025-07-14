@@ -11,7 +11,7 @@ import asyncio
 from binance.client import Client
 import pandas as pd
 
-from config import logger, PAUSED, SHUTTING_DOWN, MAX_CANDIDATOS_ACTIVOS
+from config import logger, PAUSED, SHUTTING_DOWN
 from utils import (
     get_all_usdt_symbols,
     get_historical_data,
@@ -19,7 +19,6 @@ from utils import (
     get_bollinger_bands,
     get_rsi,
     get_volume_avg,
-    count_active_candidates,
 )
 
 # ----------------------------------------------------------------------
@@ -57,16 +56,10 @@ async def phase1_search_20_candidates(state_dict: dict):
     """Escanea continuamente en busca de rupturas."""
     while not SHUTTING_DOWN.is_set():
         await PAUSED.wait()
-        if count_active_candidates(state_dict) >= MAX_CANDIDATOS_ACTIVOS:
-            await asyncio.sleep(SCAN_INTERVAL)
-            continue
-
         symbols = await get_all_usdt_symbols()
         added: list[str] = []
 
-        for sym in symbols:
-            if count_active_candidates(state_dict) >= MAX_CANDIDATOS_ACTIVOS:
-                break
+        async def _eval(sym: str):
             try:
                 ok = await _is_candidate(sym, state_dict)
                 if ok:
@@ -74,6 +67,8 @@ async def phase1_search_20_candidates(state_dict: dict):
                     added.append(sym)
             except Exception:
                 logger.exception(f"[fase1] error evaluando {sym}")
+
+        await asyncio.gather(*[_eval(s) for s in symbols])
 
         if added:
             msg = "Fase 1 – nuevas rupturas:\n" + ", ".join(added)

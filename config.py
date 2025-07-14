@@ -52,8 +52,6 @@ INITIAL_PRECANDIDATES_LIMIT = 5
 MAX_TRACKED_COINS        = 20
 PRECANDIDATES_PER_FREED_COIN = 4
 COOLDOWN_CANDLES         = 2
-# límite global de candidatos activos
-MAX_CANDIDATOS_ACTIVOS   = 20
 # EMA / HMA
 EMA_SHORT  = 8
 EMA_LONG   = 24
@@ -99,19 +97,6 @@ def update_min_entry_usdt(new_val: str) -> Optional[str]:
         MIN_ENTRY_USDT = float(new_val)
     except ValueError:
         return "Debe ser numérico"
-    return None
-
-# ------------- límite máximo de candidatos -----------------
-def update_max_candidates(new_val: str) -> Optional[str]:
-    """Actualiza MAX_CANDIDATOS_ACTIVOS."""
-    global MAX_CANDIDATOS_ACTIVOS
-    try:
-        val = int(new_val)
-        if val < 1:
-            raise ValueError
-        MAX_CANDIDATOS_ACTIVOS = val
-    except ValueError:
-        return "Debe ser un entero positivo"
     return None
 
 # config.py  (al final del archivo)
