@@ -35,10 +35,11 @@ def _active_positions(state: dict) -> int:
 async def _is_candidate(sym: str, state: dict) -> bool:
     """Devuelve True si ``sym`` cumple la ruptura inicial."""
     rec = state.get(sym)
-    if isinstance(rec, dict) and rec.get("status") in {"COMPRADA", "RESERVADA_PRE"}:
-        return False
-    if isinstance(rec, str) and rec.startswith("RESERVADA_PRE"):
-        return False
+    status = rec.get("status") if isinstance(rec, dict) else rec
+
+    if isinstance(status, str):
+        if status.startswith("COMPRADA") or status.startswith("RESERVADA_PRE"):
+            return False
 
     df = await get_historical_data(sym, Client.KLINE_INTERVAL_4HOUR, 40)
     if df is None or len(df) < 25:
