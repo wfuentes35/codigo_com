@@ -52,6 +52,8 @@ INITIAL_PRECANDIDATES_LIMIT = 5
 MAX_TRACKED_COINS        = 20
 PRECANDIDATES_PER_FREED_COIN = 4
 COOLDOWN_CANDLES         = 2
+# límite de posiciones abiertas simultáneas
+MAX_OPERACIONES_ACTIVAS  = 20
 # EMA / HMA
 EMA_SHORT  = 8
 EMA_LONG   = 24
@@ -95,6 +97,16 @@ def update_min_entry_usdt(new_val: str) -> Optional[str]:
     global MIN_ENTRY_USDT
     try:
         MIN_ENTRY_USDT = float(new_val)
+    except ValueError:
+        return "Debe ser numérico"
+    return None
+
+# ------------- límite dinámico de operaciones activas -------------
+def update_max_operaciones_activas(new_val: str) -> Optional[str]:
+    """Cambia el número máximo de operaciones simultáneas."""
+    global MAX_OPERACIONES_ACTIVAS
+    try:
+        MAX_OPERACIONES_ACTIVAS = int(new_val)
     except ValueError:
         return "Debe ser numérico"
     return None

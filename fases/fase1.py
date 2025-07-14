@@ -11,7 +11,8 @@ import asyncio
 from binance.client import Client
 import pandas as pd
 
-from config import logger, PAUSED, SHUTTING_DOWN
+import config
+from config import PAUSED, SHUTTING_DOWN
 from utils import (
     get_all_usdt_symbols,
     get_historical_data,
@@ -23,6 +24,12 @@ from utils import (
 
 # ----------------------------------------------------------------------
 SCAN_INTERVAL = 900  # segundos
+
+def _active_positions(state: dict) -> int:
+    return sum(
+        1 for r in state.values()
+        if isinstance(r, dict) and str(r.get("status", "")).startswith("COMPRADA")
+    )
 
 
 async def _is_candidate(sym: str, state: dict) -> bool:
@@ -56,6 +63,11 @@ async def phase1_search_20_candidates(state_dict: dict):
     """Escanea continuamente en busca de rupturas."""
     while not SHUTTING_DOWN.is_set():
         await PAUSED.wait()
+        if _active_positions(state_dict) >= config.MAX_OPERACIONES_ACTIVAS:
+            config.logger.debug("[fase1] límite de operaciones activas alcanzado")
+            await asyncio.sleep(SCAN_INTERVAL)
+            continue
+
         symbols = await get_all_usdt_symbols()
         added: list[str] = []
 
@@ -66,12 +78,12 @@ async def phase1_search_20_candidates(state_dict: dict):
                     state_dict[sym] = {"status": "RESERVADA_PRE"}
                     added.append(sym)
             except Exception:
-                logger.exception(f"[fase1] error evaluando {sym}")
+                config.logger.exception(f"[fase1] error evaluando {sym}")
 
         await asyncio.gather(*[_eval(s) for s in symbols])
 
         if added:
             msg = "Fase 1 – nuevas rupturas:\n" + ", ".join(added)
             await send_telegram_message(msg)
-            logger.info(msg)
+            config.logger.info(msg)
         await asyncio.sleep(SCAN_INTERVAL)

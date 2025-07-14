@@ -29,7 +29,8 @@ pip install -r requirements.txt
 automático.
 
 Los parámetros pueden modificarse en caliente a través de comandos de Telegram
-(`/set`, `/add`, `/elimina`, `/pausa`, etc.).
+(`/set`, `/add`, `/elimina`, `/pausa`, etc.).  Nuevos comandos útiles:
+`/maxcandidatos`, `/listar` y `/gitpull`.
 
 ### Archivo `manual_candidates.txt`
 
