@@ -30,12 +30,6 @@ from fases.fase3 import phase3_replenish
 # ----------------------------------------------------------------------
 STOP_ATR_MULT = 1.2
 
-def _active_positions(state: dict) -> int:
-    return sum(
-        1 for r in state.values()
-        if isinstance(r, dict) and str(r.get("status", "")).startswith("COMPRADA")
-    )
-
 
 async def _fee_to_usdt(client, fills, quote="USDT") -> float:
     total = 0.0
@@ -80,14 +74,23 @@ async def _buy_market(sym, client, usdt, hint_price):
     return dict(qty=qty, price=price, entry_cost=cost + fee, commission=fee)
 
 
-async def _evaluate(sym, state, client, freed):
+async def _evaluate(sym, state, client, freed, exclusion_dict):
     rec = state.get(sym)
     status = rec if isinstance(rec, str) else rec.get("status")
 
+    # 2.1 Chequeo de límite
+    activas = sum(
+        1 for rec in state.values()
+        if isinstance(rec, dict) and rec.get("status") == "COMPRADA"
+    )
+    if activas >= config.MAX_OPERACIONES_ACTIVAS:
+        logger.info(
+            f"❌ Límite de operaciones ({activas}/{config.MAX_OPERACIONES_ACTIVAS}) alcanzado, no compro {sym}"
+        )
+        return
+
     # -------- ENTRADA --------
     if status == "RESERVADA_PRE":
-        if _active_positions(state) >= config.MAX_OPERACIONES_ACTIVAS:
-            return
         df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 60)
         if df is None or len(df) < 30:
             return
@@ -136,19 +139,15 @@ async def _evaluate(sym, state, client, freed):
 
         ema9 = get_ema(df["close"].astype(float), 9)
         if last < ema9.iloc[-1]:
-            await send_telegram_message(f"🚨 EMA9-EXIT {sym} @ {last:.4f}")
             freed.append(sym)
 
         if not LIGHT_MODE and trailing_atr_trigger(rec, last, TRAILING_USDT):
-            await send_telegram_message(f"🚨 STOP {sym} @ {last:.4f}")
             freed.append(sym)
 
         if delta_stop_trigger(rec, last, config.STOP_DELTA_USDT):
-            await send_telegram_message(f"🚨 Δ-STOP {sym} @ {last:.4f}")
             freed.append(sym)
 
         if absolute_stop_trigger(rec["quantity"], last, config.STOP_ABS_USDT):
-            await send_telegram_message(f"🚨 ABS-STOP {sym} @ {last:.4f}")
             freed.append(sym)
 
         if sym in freed:
@@ -158,35 +157,47 @@ async def _evaluate(sym, state, client, freed):
                 try:
                     sell = await asyncio.to_thread(
                         client.create_order,
-                        symbol=sym, side="SELL", type="MARKET", quantity=qty,
+                        symbol=sym,
+                        side="SELL",
+                        type="MARKET",
+                        quantity=qty,
                     )
                     value = float(sell.get("cummulativeQuoteQty", 0.0))
                     fee = await _fee_to_usdt(client, sell.get("fills", []))
                     pnl = value - fee - rec["entry_cost"]
                     pct = 100 * pnl / rec["entry_cost"]
-
-                    await send_telegram_message(
-                        f"💰 VENTA {sym} @ {last:.4f}\n"
-                        f"🔻 Valor vendido: {value:.2f} USDT\n"
-                        f"🧾 Fee venta: {fee:.4f} USDT\n"
-                        f"📊 PnL real: {pnl:.3f} USDT ({pct:.2f}%)"
-                    )
-                    logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
                 except bexc.BinanceAPIException as e:
                     logger.error(f"Venta {sym} err: {e}")
+                    return
             else:
                 value = last * rec["quantity"]
                 fee = 0.0
                 pnl = value - fee - rec["entry_cost"]
                 pct = 100 * pnl / rec["entry_cost"]
-                await send_telegram_message(
-                    f"💰 (SIM) VENTA {sym} @ {last:.4f}\n"
-                    f"🔻 Valor simulado: {value:.2f} USDT\n"
-                    f"📊 PnL simulado: {pnl:.3f} USDT ({pct:.2f}%)"
-                )
-                logger.info(f"SIM-SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
+
+            # Determinar tipo de salida
+            if last < ema9.iloc[-1]:
+                exit_type = "EMA9-EXIT"
+            elif trailing_atr_trigger(rec, last, TRAILING_USDT):
+                exit_type = "STOP(sync)"
+            elif delta_stop_trigger(rec, last, config.STOP_DELTA_USDT):
+                exit_type = "Δ-STOP"
+            elif absolute_stop_trigger(rec["quantity"], last, config.STOP_ABS_USDT):
+                exit_type = "ABS-STOP"
+            else:
+                exit_type = "EXIT"
+
+            texto = (
+                f"🚨 {exit_type} {sym} @ {last:.4f}\n"
+                f"🔻 Valor vendido: {value:.2f} USDT\n"
+                f"🧾 Fee: {fee:.4f} USDT\n"
+                f"📊 PnL: {pnl:.2f} USDT ({pct:.2f}%)"
+            )
+            await send_telegram_message(texto)
+            logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
 
             state.pop(sym, None)
+            exclusion_dict[sym] = True
 
 
 async def phase2_monitor(state, client, exclusion_dict):
@@ -197,7 +208,8 @@ async def phase2_monitor(state, client, exclusion_dict):
         freed = []
         try:
             await asyncio.gather(*[
-                _evaluate(s, state, client, freed) for s in list(state.keys())
+                _evaluate(s, state, client, freed, exclusion_dict)
+                for s in list(state.keys())
             ])
         except Exception:
             logger.exception("[fase2] crash")

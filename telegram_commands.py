@@ -170,7 +170,10 @@ def build_telegram_app(
 
     # ---------- /listar ----------
     async def listar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        activos = [s for s, r in state_dict.items() if isinstance(r, dict)]
+        activos = [
+            s for s, r in state_dict.items()
+            if isinstance(r, dict) and r.get("status") == "COMPRADA"
+        ]
         lines = [
             f"🎯 {len(activos)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas:"
         ]
@@ -277,6 +280,7 @@ def build_telegram_app(
         out = (proc.stdout + proc.stderr).strip()
         if out:
             await update.message.reply_text(f"`{out}`", parse_mode="Markdown")
+        await update.message.reply_text("✅ Repositorio actualizado; reiniciando…")
         await restart_cmd(update, ctx)
 
     # ---------- registro ----------
