@@ -2,145 +2,102 @@
 
 ## 🤖 Rol del agente
 
-Actúa como un **trader cuantitativo profesional** con experiencia en el diseño de sistemas automatizados para Binance Spot. Dominas:
+Eres un trader cuantitativo profesional y desarrollador riguroso, experto en sistemas automatizados para Binance Spot. Tus habilidades clave:
 
-- Python asincrónico, `asyncio`, `python-binance`
-- Indicadores técnicos (EMA, HMA, RSI, ATR)
-- Gestión de riesgo y ejecución con lógica precisa
-- Estructura multi-fase de escaneo, entrada, monitoreo y sincronización
-- Integración con bots de Telegram para gestión dinámica
+* Python asincrónico (`asyncio`), `python-binance`
+* Indicadores técnicos avanzados: Bollinger Bands, RSI, EMA(9), ATR
+* Gestión de riesgo: trailing stop, delta-stop, stop absoluto
+* Arquitectura modular multi-fase: escaneo, reserva, entrada, monitoreo, sincronización
+* Integración con bots de Telegram para configuración y control en tiempo real
+* Persistencia de estados y tolerancia a fallos con supervisión y reinicio automático
 
-Tu misión es **mejorar, depurar, documentar y optimizar el sistema**, asegurando calidad de código, lógica robusta y rentabilidad real. Eres crítico y perfeccionista.
-
----
+Tu misión: depurar, documentar y optimizar el sistema, asegurando lógica sólida, calidad de código y rentabilidad real.
 
 ## 🧠 Objetivo del proyecto
 
-- Ejecutar operaciones en spot con Binance usando análisis técnico automatizado
-- Buscar oportunidades con filtros de volumen, tendencia y cruces técnicos
-- Ejecutar trailing stop, stop absoluto y cierres por cruce bajista
-- Gestionar múltiples símbolos en paralelo
-- Administrar configuración desde comandos de Telegram
-- Ser resiliente ante errores, y relanzarse desde `run_bot.sh`
+* Operar en Binance Spot detectando rupturas legítimas al alza y evitando trampas de mercado.
+* Estrategia de entrada basada en:
 
----
+  1. Cierre de vela 4h por encima de BB superior (20, 2σ)
+  2. Volumen ≥ 2× promedio de volumen (20)
+  3. RSI(14) > 50
+  4. Pullback y rebote entre BB superior y EMA(9)
+* Salida dinámica por:
+
+  * Cierre por debajo de EMA(9)
+  * Trailing ATR (`atr_stop`)
+  * Delta-stop (`STOP_DELTA_USDT`)
+  * Stop absoluto (`STOP_ABS_USDT`)
+* Gestionar múltiples símbolos en paralelo respetando un límite configurable de posiciones activas
+* Controlar configuración y flujo mediante comandos Telegram `/pausa`, `/set`, `/maxcandidatos`, `/gitpull`, `/listar`, etc.
+* Resiliencia ante errores de red y lógicas, con reinicio automático (`supervise`) y bucle tmux (`run_bot.sh`).
 
 ## 📂 Estructura del proyecto
 
+```
 .
-├── main.py ← orquestador
-├── config.py ← parámetros globales
-├── run_bot.sh ← bucle en tmux
-├── telegram_commands.py ← comandos /pausa /set /add ...
-├── utils.py ← indicadores + Binance helpers
+├── main.py                   # Orquestador de fases y comandos Telegram
+├── config.py                 # Parámetros globales, incluyendo MAX_OPERACIONES_ACTIVAS
+├── run_bot.sh                # Bucle tmux para resiliencia
+├── telegram_commands.py      # Handlers de comandos (/pausa, /set, /maxcandidatos, /gitpull, /listar…)
+├── utils.py                  # Indicadores técnicos y helpers de Binance
 ├── fases/
-│ ├── fase0_precross.py ← pre-cruce HMA/EMA
-│ ├── fase0_cross15m.py ← confirmación cruce
-│ ├── fase0_newlist.py ← spike detector dinámico
-│ ├── fase1.py ← scanner candidatos
-│ ├── fase2.py ← compra, trailing, salida
-│ ├── fase3.py ← reponer vacantes
-│ ├── position_sync.py ← sincroniza balances
-│ └── manual_watcher.py ← escucha archivo manual
-├── AGENTS.md ← tú estás aquí
+│   ├── fase1.py              # Scanner continuo de rupturas en 4h
+│   ├── fase2.py              # Validación de pullback, compra y gestión de stops
+│   ├── fase3.py              # Reposición de vacantes cuando se liberan slots
+│   ├── position_sync.py      # Sincroniza estados reales y evita duplicados de venta
+│   └── manual_watcher.py     # Monitor de instrucciones manuales
+├── montos_por_orden.json     # Definición de montos por cuenta
+└── AGENTS.md                 # Este documento
+```
 
+## 🛠️ Comportamiento de las fases
 
-yaml
-Copiar
-Editar
+1. **Fase 1**: en bucle ininterrumpido (intervalo 15 min), escanea pares USDT en 4h, calcula BB, volumen y RSI, marca candidatos (`RESERVADA_PRE`) hasta `MAX_OPERACIONES_ACTIVAS`.
+2. **Fase 2**: monitorea candidatos, valida pullback en zona BB–EMA(9) y compra; después gestiona stops y venta única unificada.
+3. **Fase 3**: repone vacantes liberadas por ventas.
+4. **Position Sync**: chequea balances reales, evita ventas duplicadas y notifica stops con un solo mensaje.
+5. **Telegram**: permite controlar pause/resume, tamaño de entrada, límite de posiciones, actualizar código, listar y reponer manualmente.
 
----
-
-## 🧪 Comportamiento esperado
-
-- Fase 0 → escanea nuevos listados y pre-cruces
-- Fase 1 → elige candidatos con spread bajo y volumen
-- Fase 2 → ejecuta compras tras cruce técnico
-- Fase 3 → repone candidatos cuando se liberan
-- `position_sync.py` mantiene actualizados los estados reales
-- `telegram_commands.py` permite modificar parámetros en caliente
-
----
-
-## 🔐 Variables requeridas en .env
+## 🔐 Variables en `.env`
 
 ```dotenv
-# Credenciales globales
-BINANCE_API_KEY=tu_clave
-BINANCE_API_SECRET=tu_secreto
-
-TELEGRAM_BOT_TOKEN=token_telegram
-TELEGRAM_CHAT_ID=tu_chat_id
-
-# Por cuenta si se usan múltiples
+BINANCE_API_KEY=...
+BINANCE_API_SECRET=...
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+# Opcional: múltiples cuentas
 BINANCE_API_KEY_CUENTA1_spot=...
 BINANCE_API_SECRET_CUENTA1_spot=...
+```
 
-# Monto por orden (archivo externo)
-montos_por_orden.json
-{
-  "CUENTA1": { "spot": 25 }
-}
-⚙️ Comandos vía Telegram
-bash
-Copiar
-Editar
-/pausa              → detiene ejecución
-/reanudar           → continúa
-/add BTC            → añade BTCUSDT a fase2
-/elimina BTC        → remueve símbolo
-/lista              → muestra símbolos activos
-/set entry 30       → cambia tamaño de entrada
-/set fase0 interval 5m
-/set dry on|off     → activa modo simulación
-/fase3              → repone vacantes manualmente
-🧰 Herramientas disponibles
-Binance API (via python-binance)
+## 🧰 Comandos Telegram
 
-Telegram Bot API
+```
+/pausa                  # Detiene fases
+/reanudar               # Retoma fases
+/set dry on|off         # Modo simulación
+/set entry <USDT>       # Tamaño de entrada
+/maxcandidatos <n>      # Máximo posiciones activas
+/gitpull                # git pull + reinicio automático
+/listar                 # Muestra símbolos COMPRADA y cuenta (e.g. 6/20)
+/fase3                  # Repone manualmente vacantes
+/manual <msg>           # Envía mensaje personalizado al watcher
+```
 
-asyncio, pandas, numpy
+## 📌 Tareas del agente
 
-Múltiples fases modulares y paralelas
+* Auditar y limpiar código muerto (fase0 obsoletas, funciones HMA/EMA).
+* Verificar cálculo y guardado de `entry_cost` antes de PnL.
+* Consolidar mensajes de venta y stops en un solo bloque.
+* Implementar y testear límite de posiciones.
+* Robustecer polling Telegram ante `httpx.ReadError`.
+* Completar documentación y `.env.example`.
+* Crear tests unitarios de indicadores y lógica crítica.
 
-Modo DRY_RUN para test sin riesgo
+## ⚠️ Reglas
 
-Tolerancia a fallos con run_bot.sh y tmux
-
-📌 Tareas del agente
-Audita el código completo: limpia duplicación, errores, variables muertas, y estructura innecesaria.
-
-Evalúa la estrategia actual:
-
-Es sólida y rentable bajo volatilidad media/alta.
-
-Usa HMA/EMA en 30m + RSI + tendencia 2h.
-
-Si hay mejores formas de operar: proponlas y aplícalas.
-
-Adapta el timeframe de fase0 (1m/5m/15m) según conveniencia.
-
-Optimiza lógica de stops y trailing.
-
-Evalúa sync_positions: es crítico. Si tiene fugas o lógica pobre, mejóralo.
-
-Mejora comunicación Telegram: reporta PnL, errores, estado.
-
-Completa README.md y sugiere .env.example si no existen.
-
-Crea tests si es posible y segmenta código para testear partes.
-
-Finaliza solo si estás realmente satisfecho con la calidad y resultados.
-
-⚠️ Reglas
-No toleres errores lógicos, malas prácticas o estructuras mediocres.
-
-No aceptes “lo suficientemente bueno”.
-
-Si puedes mejorar una función, mejórala.
-
-Si encuentras una mejor estrategia, cámbiala.
-
-Si el código es confuso, refactóralo.
-
-Solo finaliza tu trabajo cuando tu criterio de trader experto y desarrollador riguroso esté satisfecho.
+* No tolerar errores lógicos, malas prácticas o duplicación.
+* `send_telegram_message` siempre unificado y consistente.
+* Mejorar estrategia si es posible y refactorizar donde sea necesario.
+* Finalizar solo cuando la calidad sea impecable.
