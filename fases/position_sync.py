@@ -17,7 +17,8 @@ from config import (
     logger, MIN_SYNC_USDT, DRY_RUN,
 )
 from utils import (
-    get_all_usdt_symbols, get_step_size, send_telegram_message, update_light_stops
+    get_all_usdt_symbols, get_step_size, send_telegram_message,
+    update_light_stops, get_historical_data, get_ema
 )
 from fases.fase3 import phase3_search_new_candidates
 
@@ -53,8 +54,8 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 qty = float(bal["free"]) + float(bal["locked"])
                 symbol = f"{asset}USDT"
 
-                # Saltar si ya se vendió en fase2
-                if symbol not in state or exclusion_dict.get(symbol):
+                # Saltar si se vendió desde otra fase
+                if exclusion_dict.get(symbol):
                     continue
 
                 # limpiar si posición vacía
@@ -85,13 +86,33 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 # -------- posición ya sincronizada --------
                 if rec and isinstance(rec, dict):
                     if light_mode:
-                        triggered = update_light_stops(
+                        df = await get_historical_data(symbol, config.KLINE_INTERVAL_FASE2, 12)
+                        ema_exit = False
+                        last_close = price
+                        if df is not None and not df.empty:
+                            closes = df["close"].astype(float)
+                            ema9 = get_ema(closes, 9)
+                            last_close = float(closes.iloc[-1])
+                            ema_exit = last_close < ema9.iloc[-1]
+
+                        stop_trigger = update_light_stops(
                             rec, qty, price, stop_delta_usdt, stop_abs_usdt
                         )
+                        value_now = qty * price
+                        delta_hit = value_now < rec["stop_delta"]
+                        abs_hit = value_now < rec["stop_abs"]
+                        triggered = ema_exit or stop_trigger
 
                         if triggered:
+                            if ema_exit:
+                                exit_type = "EMA9-EXIT"
+                            elif delta_hit:
+                                exit_type = "Δ-STOP"
+                            elif abs_hit:
+                                exit_type = "ABS-STOP"
+                            else:
+                                exit_type = "EXIT"
 
-                            # vender
                             async with _BIN_SEM:
                                 step = await get_step_size(symbol)
                                 qty_sell = round_step_size(qty, step)
@@ -124,7 +145,7 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                     pnl = value - fee - rec.get("entry_value", current_value)
                                     pct = 100 * pnl / rec.get("entry_value", current_value)
                                     texto = (
-                                        f"🚨 STOP(sync) {symbol} @ {value/qty_sell:.4f}\n"
+                                        f"🚨 {exit_type} {symbol} @ {value/qty_sell:.4f}\n"
                                         f"🔻 Valor vendido: {value:.2f} USDT\n"
                                         f"🧾 Fee: {fee:.4f} USDT\n"
                                         f"📊 PnL: {pnl:.2f} USDT ({pct:.2f}%)"
@@ -134,7 +155,6 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                 except Exception:
                                     logger.exception(f"Venta sync {symbol} falló")
 
-                            # liberar y repoblar
                             state.pop(symbol, None)
                             exclusion_dict[symbol] = True
                             await phase3_search_new_candidates(state, _ensure_int(1), exclusion_dict)
