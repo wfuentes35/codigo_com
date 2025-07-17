@@ -50,8 +50,12 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 if asset == "USDT":
                     continue
 
-                qty    = float(bal["free"]) + float(bal["locked"])
+                qty = float(bal["free"]) + float(bal["locked"])
                 symbol = f"{asset}USDT"
+
+                # Saltar si ya se vendió en fase2
+                if symbol not in state or exclusion_dict.get(symbol):
+                    continue
 
                 # limpiar si posición vacía
                 if qty == 0 or not asset_ok(asset, valid_assets):
@@ -86,12 +90,6 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                         )
 
                         if triggered:
-                            msg = (
-                                f"🚨 STOP(sync) {symbol} • value={current_value:.2f} USDT / "
-                                f"Δ={rec['stop_delta']:.2f} • abs={rec['stop_abs']:.2f}"
-                            )
-                            await send_telegram_message(msg)
-                            logger.info(msg)
 
                             # vender
                             async with _BIN_SEM:
@@ -125,15 +123,20 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                         fee = 0.0
                                     pnl = value - fee - rec.get("entry_value", current_value)
                                     pct = 100 * pnl / rec.get("entry_value", current_value)
-                                    await send_telegram_message(
-                                        f"💰 VENTA sync {symbol} @ {value/qty_sell:.4f}\n"
-                                        f"📊 PnL: {pnl:.3f} USDT ({pct:.2f}%)"
+                                    texto = (
+                                        f"🚨 STOP(sync) {symbol} @ {value/qty_sell:.4f}\n"
+                                        f"🔻 Valor vendido: {value:.2f} USDT\n"
+                                        f"🧾 Fee: {fee:.4f} USDT\n"
+                                        f"📊 PnL: {pnl:.2f} USDT ({pct:.2f}%)"
                                     )
+                                    await send_telegram_message(texto)
+                                    logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f}")
                                 except Exception:
                                     logger.exception(f"Venta sync {symbol} falló")
 
                             # liberar y repoblar
                             state.pop(symbol, None)
+                            exclusion_dict[symbol] = True
                             await phase3_search_new_candidates(state, _ensure_int(1), exclusion_dict)
                     continue
 
