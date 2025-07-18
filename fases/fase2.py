@@ -81,7 +81,7 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
     # 2.1 Chequeo de límite
     activas = sum(
         1 for rec in state.values()
-        if isinstance(rec, dict) and rec.get("status") == "COMPRADA"
+        if isinstance(rec, dict) and str(rec.get("status", "")).startswith("COMPRADA")
     )
     if activas >= config.MAX_OPERACIONES_ACTIVAS:
         logger.info(
