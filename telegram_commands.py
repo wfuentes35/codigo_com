@@ -133,53 +133,44 @@ def build_telegram_app(
             msg = f"{sym} no estaba en lista."
         await update.message.reply_text(msg)
         logger.info(f"/elimina {sym}")
-
-    # ---------- /lista ----------
-    async def lista(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # ---------- /listar ----------
+    async def listar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not state_dict:
             return await update.message.reply_text("No hay símbolos en seguimiento.")
 
         reservadas = [s for s, r in state_dict.items() if isinstance(r, str)]
-        compradas  = [(s, r) for s, r in state_dict.items() if isinstance(r, dict)]
+        activas = [
+            (s, r) for s, r in state_dict.items()
+            if isinstance(r, dict) and str(r.get("status", "")).startswith("COMPRADA")
+        ]
 
-        líneas = []
+        lineas = [f"🎯 {len(activas)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas:"]
+
         if reservadas:
-            líneas.append(f"🏆 Reservadas ({len(reservadas)}): " + ", ".join(reservadas))
+            lineas.append(f"🏆 Reservadas ({len(reservadas)}): " + ", ".join(sorted(reservadas)))
 
-        if compradas:
-            líneas.append("💰 Posiciones sincronizadas:")
+        if activas:
+            lineas.append("💰 Posiciones sincronizadas:")
             tickers = await asyncio.gather(*[
                 asyncio.to_thread(config.client.get_symbol_ticker, symbol=s)
-                for s, _ in compradas
+                for s, _ in activas
             ], return_exceptions=True)
-            for (sym, rec), t in zip(compradas, tickers):
+            for (sym, rec), t in zip(activas, tickers):
                 price = float(t["price"]) if not isinstance(t, Exception) else rec.get("entry_price", 0.0)
-                qty   = rec.get("quantity", 0.0)
-                entry_val = rec.get("entry_value", rec.get("entry_price", 0.0)*qty)
-                curr_val  = price * qty
+                qty = rec.get("quantity", 0.0)
+                entry_val = rec.get("entry_value", rec.get("entry_price", 0.0) * qty)
+                curr_val = price * qty
                 pnl = curr_val - entry_val
                 pct = 100 * pnl / entry_val if entry_val else 0.0
-                max_val    = rec.get("max_value",   rec.get("max_price",  0.0))
-                stop_delta = rec.get("stop_delta",  rec.get("stop",       0.0))
-                stop_abs   = rec.get("stop_abs",    0.0)
-                líneas.append(
-                    f"{sym}: PnL={pnl:.2f} ({pct:.2f}%) | "
-                    f"máx={max_val:.2f} Δ-stop={stop_delta:.2f} | stop_abs={stop_abs:.2f}"
+                max_val = rec.get("max_value", rec.get("max_price", 0.0))
+                stop_delta = rec.get("stop_delta", rec.get("stop", 0.0))
+                stop_abs = rec.get("stop_abs", 0.0)
+                origen = "SINC" if rec.get("status") == "COMPRADA_SYNC" else "BOT"
+                lineas.append(
+                    f"{sym} ({origen}): PnL={pnl:.2f} ({pct:.2f}%) | máx={max_val:.2f} Δ-stop={stop_delta:.2f} | stop_abs={stop_abs:.2f}"
                 )
-        await update.message.reply_text("\n".join(líneas))
 
-    # ---------- /listar ----------
-    async def listar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        activos = [
-            s for s, r in state_dict.items()
-            if isinstance(r, dict) and r.get("status") == "COMPRADA"
-        ]
-        lines = [
-            f"🎯 {len(activos)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas:"
-        ]
-        lines += sorted(state_dict.keys()) or ["(sin candidatos)"]
-        await update.message.reply_text("\n".join(lines))
-
+        await update.message.reply_text("\n".join(lineas))
     # ---------- /fase3 ----------
     async def phase3_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         from fases.fase3 import phase3_search_new_candidates
@@ -286,7 +277,6 @@ def build_telegram_app(
     # ---------- registro ----------
     app.add_handler(CommandHandler("add",      add_cmd))
     app.add_handler(CommandHandler("elimina",  del_cmd))
-    app.add_handler(CommandHandler("lista",    lista))
     app.add_handler(CommandHandler("listar",   listar_cmd))
     app.add_handler(CommandHandler("maxcandidatos", maxcandidatos_cmd))
     app.add_handler(CommandHandler("gitpull",  gitpull_cmd))
