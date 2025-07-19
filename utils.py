@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 import telegram.error
 from binance import exceptions as bexc
+from binance.client import Client
+import math
 from config import (
     client, logger, telegram_bot, TELEGRAM_CHAT_ID,
     STOP_ABS_HIGH_FACTOR, STOP_ABS_HIGH_THRESHOLD,
@@ -273,4 +275,57 @@ async def get_market_filters(symbol: str) -> tuple[float, float]:
 
     _FILTER_CACHE[symbol] = (step, min_notional)
     return step, min_notional
+
+
+# ─────────────────────────────────────────────────────────────
+#  Safe market sell helpers
+# ─────────────────────────────────────────────────────────────
+
+async def get_available_qty(client: Client, symbol: str) -> float:
+    """Return free balance for ``symbol`` base asset."""
+    asset = symbol[:-4]
+    bal = await asyncio.to_thread(client.get_asset_balance, asset=asset)
+    return float(bal["free"])
+
+
+async def get_full_market_filters(client: Client, symbol: str):
+    """Return ``(stepSize, minQty, minNotional)`` for ``symbol``."""
+    info = await asyncio.to_thread(client.get_symbol_info, symbol=symbol)
+    lot = next(f for f in info["filters"] if f["filterType"] == "LOT_SIZE")
+    min_notional = next(
+        (f for f in info["filters"] if f["filterType"] == "MIN_NOTIONAL"), None
+    )
+    return (
+        float(lot["stepSize"]),
+        float(lot["minQty"]),
+        float(min_notional["minNotional"]) if min_notional else 0.0,
+    )
+
+
+async def safe_market_sell(client: Client, symbol: str, raw_qty: float):
+    """Safely execute a market sell respecting filters."""
+    step, min_qty, min_notional = await get_full_market_filters(client, symbol)
+    available = min(raw_qty, await get_available_qty(client, symbol))
+
+    qty = available - (available % step)
+    qty = round(qty, int(-round(math.log10(step))))
+
+    if qty < min_qty - 1e-12:
+        return False, f"qty<{min_qty} LOT_SIZE (dust)"
+
+    if min_notional:
+        price = float((await asyncio.to_thread(
+            client.get_symbol_ticker, symbol=symbol))["price"])
+        if qty * price < min_notional - 1e-8:
+            return False, f"valor<{min_notional} MIN_NOTIONAL"
+
+    try:
+        order = await asyncio.to_thread(
+            client.create_order,
+            symbol=symbol, side="SELL", type="MARKET", quantity=qty
+        )
+        return True, order
+    except bexc.BinanceAPIException as e:
+        return False, f"error {e.code}:{e.message}"
+
 

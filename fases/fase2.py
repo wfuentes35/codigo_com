@@ -23,6 +23,7 @@ from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
     get_step_size, get_market_filters, update_light_stops,
+    safe_market_sell,
 )
 from fases.fase3 import phase3_replenish
 
@@ -150,23 +151,17 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
 
         if sym in freed:
             if not DRY_RUN:
-                step = await get_step_size(sym)
-                qty = round_step_size(rec["quantity"], step)
-                try:
-                    sell = await asyncio.to_thread(
-                        client.create_order,
-                        symbol=sym,
-                        side="SELL",
-                        type="MARKET",
-                        quantity=qty,
-                    )
-                    value = float(sell.get("cummulativeQuoteQty", 0.0))
-                    fee = await _fee_to_usdt(client, sell.get("fills", []))
-                    pnl = value - fee - rec["entry_cost"]
-                    pct = 100 * pnl / rec["entry_cost"]
-                except bexc.BinanceAPIException as e:
-                    logger.error(f"Venta {sym} err: {e}")
+                ok, sell = await safe_market_sell(client, sym, rec["quantity"])
+                if not ok:
+                    logger.warning(f"No se vendió {sym}: {sell}")
+                    await send_telegram_message(f"⚠️ Venta {sym} cancelada: {sell}")
+                    state.pop(sym, None)
+                    exclusion_dict[sym] = True
                     return
+                value = float(sell.get("cummulativeQuoteQty", 0.0))
+                fee = await _fee_to_usdt(client, sell.get("fills", []))
+                pnl = value - fee - rec["entry_cost"]
+                pct = 100 * pnl / rec["entry_cost"]
             else:
                 value = last * rec["quantity"]
                 fee = 0.0

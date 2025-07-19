@@ -18,7 +18,8 @@ from config import (
 )
 from utils import (
     get_all_usdt_symbols, get_step_size, send_telegram_message,
-    update_light_stops, get_historical_data, get_ema
+    update_light_stops, get_historical_data, get_ema,
+    safe_market_sell,
 )
 from fases.fase3 import phase3_search_new_candidates
 
@@ -112,13 +113,13 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                 qty_sell = round_step_size(qty, step)
                                 try:
                                     if not DRY_RUN:
-                                        sell = await asyncio.to_thread(
-                                            client.create_order,
-                                            symbol=symbol,
-                                            side="SELL",
-                                            type="MARKET",
-                                            quantity=qty_sell,
-                                        )
+                                        ok, sell = await safe_market_sell(client, symbol, qty_sell)
+                                        if not ok:
+                                            logger.warning(f"Venta sync {symbol} falló: {sell}")
+                                            await send_telegram_message(f"⚠️ Venta {symbol} cancelada: {sell}")
+                                            state.pop(symbol, None)
+                                            exclusion_dict[symbol] = True
+                                            continue
                                         value = float(sell.get("cummulativeQuoteQty", 0.0))
                                         fee = 0.0
                                         for f in sell.get("fills", []):
