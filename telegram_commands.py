@@ -135,9 +135,9 @@ def build_telegram_app(
         logger.info(f"/elimina {sym}")
     # ---------- /listar ----------
     async def listar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        compradas = [
-            (s, r) for s, r in state_dict.items()
-            if isinstance(r, dict) and r.get("status") == "COMPRADA"
+        activos = [
+            (sym, rec) for sym, rec in state_dict.items()
+            if isinstance(rec, dict) and rec.get("status", "").startswith("COMPRADA")
         ]
         reservadas = [
             s for s, r in state_dict.items()
@@ -145,14 +145,14 @@ def build_telegram_app(
         ]
 
         header = (
-            f"🎯 {len(compradas)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas\n"
+            f"🎯 {len(activos)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas\n"
             f"Δ‑stop={config.STOP_DELTA_USDT}  stop_abs={config.STOP_ABS_USDT}"
         )
 
         body = []
-        if compradas:
+        if activos:
             body.append("💰 Posiciones abiertas:")
-            for sym, rec in compradas:
+            for sym, rec in activos:
                 qty = rec["quantity"]
                 tkr = await asyncio.to_thread(config.client.get_symbol_ticker, symbol=sym)
                 last = float(tkr["price"])
