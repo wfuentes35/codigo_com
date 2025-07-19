@@ -225,16 +225,22 @@ def absolute_stop_trigger(qty: float, last: float, stop_abs_usdt: float) -> bool
 
 def update_light_stops(rec: dict, qty: float, last_price: float,
                        stop_delta_usdt: float) -> bool:
-    """Actualiza trailing Δ-stop y devuelve ``True`` si se activa."""
+    """Actualiza el trailing Δ-stop y devuelve ``True`` si se activa."""
 
     value_now = qty * last_price
 
-    # --- trailing Δ-stop ---
-    if value_now > rec.get("max_value", value_now):
+    # inicializar campos faltantes (posiciones legacy)
+    if "max_value" not in rec:
+        rec["max_value"] = value_now
+    if "stop_delta" not in rec:
+        rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
+        return False  # no puede activarse en la primera pasada
+
+    # trailing Δ-stop
+    if value_now > rec["max_value"]:
         rec["max_value"] = value_now
         rec["stop_delta"] = value_now - stop_delta_usdt
 
-    # --- Δ-stop trigger ---
     return value_now <= rec["stop_delta"]
 
 # ─────────────────────────────────────────────────────────────
