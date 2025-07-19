@@ -221,23 +221,26 @@ def absolute_stop_trigger(qty: float, last: float, stop_abs_usdt: float) -> bool
     """Devuelve ``True`` si el valor de la posición es menor que ``stop_abs_usdt``."""
     return qty * last < stop_abs_usdt
 
-def update_light_stops(rec: dict, qty: float, price: float,
-                       stop_delta_usdt: float, stop_abs_usdt: float) -> bool:
-    """Actualiza max_value, Δ-stop y stop_abs. Devuelve ``True`` si se activa."""
-    value = qty * price
-    rec["max_value"] = max(rec.get("max_value", 0.0), value)
-    rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
-    rec["stop_abs"] = (
-        STOP_ABS_HIGH_FACTOR * qty
-        if price >= STOP_ABS_HIGH_THRESHOLD
-        else stop_abs_usdt
-    )
-    return value < rec["stop_delta"] or value < rec["stop_abs"]
+def update_light_stops(rec: dict, qty: float, last_price: float,
+                       stop_delta_usdt: float) -> bool:
+    """Actualiza trailing Δ-stop y devuelve ``True`` si se activa."""
+
+    value_now = qty * last_price
+
+    # --- trailing Δ-stop ---
+    if value_now > rec.get("max_value", value_now):
+        rec["max_value"] = value_now
+        rec["stop_delta"] = value_now - stop_delta_usdt
+
+    # --- Δ-stop trigger ---
+    return value_now <= rec["stop_delta"]
 
 # ─────────────────────────────────────────────────────────────
 #  LOT_SIZE helper (stepSize cache)
 # ─────────────────────────────────────────────────────────────
 _STEP_CACHE: dict[str, float] = {}
+
+_FILTER_CACHE: dict[str, tuple[float, float]] = {}
 
 async def get_step_size(symbol: str) -> float:
     if symbol in _STEP_CACHE:
@@ -252,4 +255,22 @@ async def get_step_size(symbol: str) -> float:
             break
 
     return _STEP_CACHE.get(symbol, 0.000001)
+
+async def get_market_filters(symbol: str) -> tuple[float, float]:
+    """Devuelve ``(step_size, min_notional)`` usando caché."""
+    if symbol in _FILTER_CACHE:
+        return _FILTER_CACHE[symbol]
+
+    async with await _bin_sem():
+        info = await asyncio.to_thread(client.get_symbol_info, symbol=symbol)
+
+    step, min_notional = 0.000001, 0.0
+    for flt in info["filters"]:
+        if flt["filterType"] == "LOT_SIZE":
+            step = float(flt["stepSize"])
+        elif flt["filterType"] == "MIN_NOTIONAL":
+            min_notional = float(flt.get("minNotional", 0.0))
+
+    _FILTER_CACHE[symbol] = (step, min_notional)
+    return step, min_notional
 
