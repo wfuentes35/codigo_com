@@ -16,19 +16,15 @@ from binance.helpers import round_step_size
 from binance import exceptions as bexc
 from binance.exceptions import BinanceAPIException
 from config import (
-    logger, DRY_RUN, TRAILING_USDT, LIGHT_MODE,
+    logger, DRY_RUN, LIGHT_MODE,
     KLINE_INTERVAL_FASE2, CHECK_INTERVAL,
 )
 from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
-    get_step_size, atr_stop, trailing_atr_trigger, delta_stop_trigger,
-    absolute_stop_trigger,
+    get_step_size, get_market_filters, update_light_stops,
 )
 from fases.fase3 import phase3_replenish
-
-# ----------------------------------------------------------------------
-STOP_ATR_MULT = 1.2
 
 
 async def _fee_to_usdt(client, fills, quote="USDT") -> float:
@@ -108,20 +104,26 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
         if not (in_zone and rebound):
             return
 
+        step, min_notional = await get_market_filters(sym)
+        if config.MIN_ENTRY_USDT < min_notional:
+            await send_telegram_message(
+                f"⚠️ {sym}: min\u202Fnotional {min_notional:.2f}\u202FUSDT • ajusta /set entry"
+            )
+            return
+
         trade = await _buy_market(sym, client, config.MIN_ENTRY_USDT, close.iloc[-1])
         if trade is None:
             state.pop(sym, None)
             return
 
-        state[sym] = dict(
-            status="COMPRADA",
-            entry_price=trade["price"],
-            entry_cost=trade["entry_cost"],
-            quantity=trade["qty"],
-            stop=atr_stop(df, trade["price"], STOP_ATR_MULT),
-            max_price=trade["price"],
-            commission=trade["commission"],
-        )
+        state[sym] = {
+            "status":      "COMPRADA",
+            "entry_price": trade["price"],
+            "entry_cost":  trade["entry_cost"],
+            "quantity":    trade["qty"],
+            "max_value":   trade["entry_cost"],
+            "stop_delta":  trade["entry_cost"] - config.STOP_DELTA_USDT,
+        }
         await send_telegram_message(
             f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
             f"🧾 Coste total: {trade['entry_cost']:.2f} USDT (Fee {trade['commission']:.4f})"
@@ -135,20 +137,16 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
         if df is None or df.empty:
             return
         last = float(df["close"].iloc[-1])
-        rec["max_price"] = max(rec.get("max_price", rec["entry_price"]), last)
-
         ema9 = get_ema(df["close"].astype(float), 9)
+        value_now = rec["quantity"] * last
+
+        # --- disparadores ---
         if last < ema9.iloc[-1]:
-            freed.append(sym)
-
-        if not LIGHT_MODE and trailing_atr_trigger(rec, last, TRAILING_USDT):
-            freed.append(sym)
-
-        if delta_stop_trigger(rec, last, config.STOP_DELTA_USDT):
-            freed.append(sym)
-
-        if absolute_stop_trigger(rec["quantity"], last, config.STOP_ABS_USDT):
-            freed.append(sym)
+            rec["exit_reason"] = "EMA9-EXIT"; freed.append(sym)
+        elif update_light_stops(rec, rec["quantity"], last, config.STOP_DELTA_USDT):
+            rec["exit_reason"] = "Δ-STOP"; freed.append(sym)
+        elif value_now <= config.STOP_ABS_USDT:
+            rec["exit_reason"] = "ABS-STOP"; freed.append(sym)
 
         if sym in freed:
             if not DRY_RUN:
@@ -175,23 +173,12 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
                 pnl = value - fee - rec["entry_cost"]
                 pct = 100 * pnl / rec["entry_cost"]
 
-            # Determinar tipo de salida
-            if last < ema9.iloc[-1]:
-                exit_type = "EMA9-EXIT"
-            elif trailing_atr_trigger(rec, last, TRAILING_USDT):
-                exit_type = "STOP(sync)"
-            elif delta_stop_trigger(rec, last, config.STOP_DELTA_USDT):
-                exit_type = "Δ-STOP"
-            elif absolute_stop_trigger(rec["quantity"], last, config.STOP_ABS_USDT):
-                exit_type = "ABS-STOP"
-            else:
-                exit_type = "EXIT"
-
+            exit_type = rec.pop("exit_reason", "EXIT")
             texto = (
                 f"🚨 {exit_type} {sym} @ {last:.4f}\n"
-                f"🔻 Valor vendido: {value:.2f} USDT\n"
-                f"🧾 Fee: {fee:.4f} USDT\n"
-                f"📊 PnL: {pnl:.2f} USDT ({pct:.2f}%)"
+                f"🔻 Valor vendido: {value:.2f}\u202FUSDT\n"
+                f"🧾 Fee: {fee:.4f}\u202FUSDT\n"
+                f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
             )
             await send_telegram_message(texto)
             logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")

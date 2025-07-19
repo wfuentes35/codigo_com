@@ -34,12 +34,12 @@ for noisy in ("httpx", "telegram._network.httpx_backend",
 # ───── Parámetros globales del bot ──────────────────────────────────
 DRY_RUN                  = False          # no envía orden real si True
 # tamaños
-MIN_ENTRY_USDT           = 20.0
+MIN_ENTRY_USDT           = 20
 MIN_SYNC_USDT            = 10.0
 # stops
 TRAILING_USDT            = 2.0            # colchón ATR
-STOP_DELTA_USDT          = 1.0            # trailing dinámico (máx-price−Δ)
-STOP_ABS_USDT            = 18.0           # stop absoluto en valor
+STOP_DELTA_USDT          = 1              # trailing fijo en USDT
+STOP_ABS_USDT            = 18             # stop absoluto en USDT
 STOP_ABS_HIGH_FACTOR     = 51.0           # stop por cantidad si precio alto
 STOP_ABS_HIGH_THRESHOLD  = 55.0           # umbral de precio alto USDT
 # modo liviano
@@ -53,7 +53,7 @@ MAX_TRACKED_COINS        = 20
 PRECANDIDATES_PER_FREED_COIN = 4
 COOLDOWN_CANDLES         = 2
 # límite de posiciones abiertas simultáneas
-MAX_OPERACIONES_ACTIVAS  = 20
+MAX_OPERACIONES_ACTIVAS  = 10
 # EMA / HMA
 EMA_SHORT  = 8
 EMA_LONG   = 24

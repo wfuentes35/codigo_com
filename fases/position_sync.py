@@ -78,7 +78,6 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
 
                 # leer parámetros vivos
                 stop_delta_usdt = config.STOP_DELTA_USDT
-                stop_abs_usdt   = config.STOP_ABS_USDT
                 light_mode      = config.LIGHT_MODE
 
                 rec = state.get(symbol)
@@ -87,32 +86,27 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 if rec and isinstance(rec, dict):
                     if light_mode:
                         df = await get_historical_data(symbol, config.KLINE_INTERVAL_FASE2, 12)
-                        ema_exit = False
-                        last_close = price
+                        triggers = []
                         if df is not None and not df.empty:
                             closes = df["close"].astype(float)
                             ema9 = get_ema(closes, 9)
-                            last_close = float(closes.iloc[-1])
-                            ema_exit = last_close < ema9.iloc[-1]
+                            if price <= ema9.iloc[-1]:
+                                rec["exit_reason"] = "EMA9-EXIT"
+                                triggers.append(symbol)
+
+                        value_now = qty * price
 
                         stop_trigger = update_light_stops(
-                            rec, qty, price, stop_delta_usdt, stop_abs_usdt
+                            rec, qty, price, stop_delta_usdt
                         )
-                        value_now = qty * price
-                        delta_hit = value_now < rec["stop_delta"]
-                        abs_hit = value_now < rec["stop_abs"]
-                        triggered = ema_exit or stop_trigger
+                        if stop_trigger:
+                            rec["exit_reason"] = "Δ-STOP"
+                            triggers.append(symbol)
+                        elif value_now <= config.STOP_ABS_USDT:
+                            rec["exit_reason"] = "ABS-STOP"
+                            triggers.append(symbol)
 
-                        if triggered:
-                            if ema_exit:
-                                exit_type = "EMA9-EXIT"
-                            elif delta_hit:
-                                exit_type = "Δ-STOP"
-                            elif abs_hit:
-                                exit_type = "ABS-STOP"
-                            else:
-                                exit_type = "EXIT"
-
+                        if triggers:
                             async with _BIN_SEM:
                                 step = await get_step_size(symbol)
                                 qty_sell = round_step_size(qty, step)
@@ -142,13 +136,15 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                     else:
                                         value = price * qty_sell
                                         fee = 0.0
-                                    pnl = value - fee - rec.get("entry_value", current_value)
-                                    pct = 100 * pnl / rec.get("entry_value", current_value)
+                                    entry_cost = rec.get("entry_cost", current_value)
+                                    pnl = value - fee - entry_cost
+                                    pct = 100 * pnl / entry_cost
+                                    exit_type = rec.pop("exit_reason", "EXIT")
                                     texto = (
                                         f"🚨 {exit_type} {symbol} @ {value/qty_sell:.4f}\n"
-                                        f"🔻 Valor vendido: {value:.2f} USDT\n"
-                                        f"🧾 Fee: {fee:.4f} USDT\n"
-                                        f"📊 PnL: {pnl:.2f} USDT ({pct:.2f}%)"
+                                        f"🔻 Valor vendido: {value:.2f}\u202FUSDT\n"
+                                        f"🧾 Fee: {fee:.4f}\u202FUSDT\n"
+                                        f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
                                     )
                                     await send_telegram_message(texto)
                                     logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f}")
@@ -164,11 +160,10 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 state[symbol] = {
                     "status":      "COMPRADA_SYNC",
                     "entry_price": price,
-                    "entry_value": current_value,
+                    "entry_cost":  current_value,
                     "quantity":    qty,
                     "max_value":   current_value,
-                    "stop_delta":  current_value - stop_delta_usdt,
-                    "stop_abs":    stop_abs_usdt,
+                    "stop_delta":  current_value - config.STOP_DELTA_USDT,
                 }
                 await send_telegram_message(
                     f"📡 Sincronizada {symbol} • value={current_value:.2f} USDT"

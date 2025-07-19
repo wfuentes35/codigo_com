@@ -135,42 +135,39 @@ def build_telegram_app(
         logger.info(f"/elimina {sym}")
     # ---------- /listar ----------
     async def listar_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not state_dict:
-            return await update.message.reply_text("No hay símbolos en seguimiento.")
-
-        reservadas = [s for s, r in state_dict.items() if isinstance(r, str)]
-        activas = [
+        compradas = [
             (s, r) for s, r in state_dict.items()
-            if isinstance(r, dict) and str(r.get("status", "")).startswith("COMPRADA")
+            if isinstance(r, dict) and r.get("status") == "COMPRADA"
+        ]
+        reservadas = [
+            s for s, r in state_dict.items()
+            if isinstance(r, dict) and r.get("status") == "RESERVADA_PRE"
         ]
 
-        lineas = [f"🎯 {len(activas)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas:"]
+        header = (
+            f"🎯 {len(compradas)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas\n"
+            f"Δ‑stop={config.STOP_DELTA_USDT}  stop_abs={config.STOP_ABS_USDT}"
+        )
 
-        if reservadas:
-            lineas.append(f"🏆 Reservadas ({len(reservadas)}): " + ", ".join(sorted(reservadas)))
-
-        if activas:
-            lineas.append("💰 Posiciones sincronizadas:")
-            tickers = await asyncio.gather(*[
-                asyncio.to_thread(config.client.get_symbol_ticker, symbol=s)
-                for s, _ in activas
-            ], return_exceptions=True)
-            for (sym, rec), t in zip(activas, tickers):
-                price = float(t["price"]) if not isinstance(t, Exception) else rec.get("entry_price", 0.0)
-                qty = rec.get("quantity", 0.0)
-                entry_val = rec.get("entry_value", rec.get("entry_price", 0.0) * qty)
-                curr_val = price * qty
-                pnl = curr_val - entry_val
-                pct = 100 * pnl / entry_val if entry_val else 0.0
-                max_val = rec.get("max_value", rec.get("max_price", 0.0))
-                stop_delta = rec.get("stop_delta", rec.get("stop", 0.0))
-                stop_abs = rec.get("stop_abs", 0.0)
-                origen = "SINC" if rec.get("status") == "COMPRADA_SYNC" else "BOT"
-                lineas.append(
-                    f"{sym} ({origen}): PnL={pnl:.2f} ({pct:.2f}%) | máx={max_val:.2f} Δ-stop={stop_delta:.2f} | stop_abs={stop_abs:.2f}"
+        body = []
+        if compradas:
+            body.append("💰 Posiciones abiertas:")
+            for sym, rec in compradas:
+                qty = rec["quantity"]
+                tkr = await asyncio.to_thread(config.client.get_symbol_ticker, symbol=sym)
+                last = float(tkr["price"])
+                pnl = last * qty - rec["entry_cost"]
+                pct = 100 * pnl / rec["entry_cost"]
+                body.append(
+                    f"{sym}: PnL={pnl:+.2f}\u202F({pct:+.2f}\u202F%) | "
+                    f"Δ-stop={rec['stop_delta']:.2f}"
                 )
 
-        await update.message.reply_text("\n".join(lineas))
+        if reservadas:
+            body.append("\n⏳ Reservadas:")
+            body.append("  " + ", ".join(reservadas))
+
+        await update.message.reply_text("\n".join([header, *body]))
     # ---------- /fase3 ----------
     async def phase3_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         from fases.fase3 import phase3_search_new_candidates
