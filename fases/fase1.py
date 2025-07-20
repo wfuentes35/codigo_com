@@ -24,6 +24,7 @@ from utils import (
 
 # ----------------------------------------------------------------------
 SCAN_INTERVAL = 900  # segundos
+INITIAL_DELAY = 60  # segundos de espera tras el arranque
 
 def _active_positions(state: dict) -> int:
     return sum(
@@ -62,6 +63,7 @@ async def _is_candidate(sym: str, state: dict) -> bool:
 
 async def phase1_search_20_candidates(state_dict: dict):
     """Escanea continuamente en busca de rupturas."""
+    await asyncio.sleep(INITIAL_DELAY)  # espera inicial
     while not SHUTTING_DOWN.is_set():
         await PAUSED.wait()
         if _active_positions(state_dict) >= config.MAX_OPERACIONES_ACTIVAS:
