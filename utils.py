@@ -239,7 +239,8 @@ def update_light_stops(rec: dict, qty: float, last_price: float,
     # trailing Δ-stop
     if value_now > rec["max_value"]:
         rec["max_value"] = value_now
-        rec["stop_delta"] = value_now - stop_delta_usdt
+        # trailing Δ-stop sólo sube
+        trail_stop_delta(rec, value_now, stop_delta_usdt)
 
     return value_now <= rec["stop_delta"]
 
@@ -369,3 +370,14 @@ async def log_sale_to_excel(symbol: str, value: float,
         logger.exception(f"[excel] error registrando venta {symbol}: {e}")
         await send_telegram_message(
             f"⚠️ Error guardando historial_ventas.xlsx: {e}")
+
+# ─── trailing stop_delta que sólo sube ────────────────────────────────
+def trail_stop_delta(rec: dict, value_now: float, delta_usdt: float) -> bool:
+    """Incrementa ``rec['stop_delta']`` si ``value_now - delta_usdt`` supera el
+    valor almacenado.  Devuelve ``True`` si se movió, ``False`` si no."""
+    new_stop = value_now - delta_usdt
+    old_stop = rec.get("stop_delta", 0.0)
+    if new_stop > old_stop:
+        rec["stop_delta"] = new_stop
+        return True
+    return False
