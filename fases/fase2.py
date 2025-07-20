@@ -24,7 +24,7 @@ from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
     get_step_size, get_market_filters, update_light_stops,
-    safe_market_sell,
+    safe_market_sell, log_sale_to_excel,
 )
 from fases.fase3 import phase3_replenish
 
@@ -179,6 +179,8 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
                 f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
             )
             await send_telegram_message(texto)
+            if not DRY_RUN:
+                await log_sale_to_excel(sym, value, pnl, pct)
             logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
 
             state.pop(sym, None)
