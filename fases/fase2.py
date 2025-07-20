@@ -24,7 +24,7 @@ from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
     get_step_size, get_market_filters, update_light_stops,
-    safe_market_sell, log_sale_to_excel,
+    trail_stop_delta, safe_market_sell, log_sale_to_excel,
 )
 from fases.fase3 import phase3_replenish
 
