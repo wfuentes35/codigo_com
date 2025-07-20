@@ -335,3 +335,37 @@ async def safe_market_sell(client: Client, symbol: str, raw_qty: float):
         return False, f"error {e.code}:{e.message}"
 
 
+
+import pandas as pd, asyncio, logging
+from datetime import datetime
+from pathlib import Path
+from config import logger
+
+async def log_sale_to_excel(symbol: str, value: float,
+                            pnl: float, pct: float):
+    """
+    Añade una fila a historial_ventas.xlsx.
+    Si falla, se deja registro en logger y un aviso por Telegram.
+    """
+    from utils import send_telegram_message  # import local para evitar ciclos
+    fn = Path("historial_ventas.xlsx")
+    row = {
+        "fecha": datetime.utcnow().isoformat(timespec="seconds"),
+        "symbol": symbol,
+        "valor": round(value, 2),
+        "pnl":   round(pnl, 2),
+        "pct":   round(pct, 2),
+        "resultado": "positivo" if pnl > 0 else "negativo",
+    }
+    try:
+        if fn.exists():
+            df = pd.read_excel(fn)
+            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+        else:
+            df = pd.DataFrame([row])
+        df.to_excel(fn, index=False)
+        logger.info(f"[excel] venta registrada {symbol} valor={value:.2f}")
+    except Exception as e:
+        logger.exception(f"[excel] error registrando venta {symbol}: {e}")
+        await send_telegram_message(
+            f"⚠️ Error guardando historial_ventas.xlsx: {e}")

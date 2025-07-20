@@ -19,7 +19,7 @@ from config import (
 from utils import (
     get_all_usdt_symbols, get_step_size, send_telegram_message,
     update_light_stops, get_historical_data, get_ema,
-    safe_market_sell,
+    safe_market_sell, log_sale_to_excel,
 )
 from fases.fase3 import phase3_search_new_candidates
 
@@ -148,6 +148,8 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                         f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
                                     )
                                     await send_telegram_message(texto)
+                                    if not DRY_RUN:
+                                        await log_sale_to_excel(symbol, value, pnl, pct)
                                     logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f}")
                                 except Exception:
                                     logger.exception(f"Venta sync {symbol} falló")
