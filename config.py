@@ -52,6 +52,9 @@ INITIAL_PRECANDIDATES_LIMIT = 5
 MAX_TRACKED_COINS        = 20
 PRECANDIDATES_PER_FREED_COIN = 4
 COOLDOWN_CANDLES         = 2
+# --- control de saldo insuficiente ---
+INSUFFICIENT_BALANCE_COOLDOWN = 600      # 10 min
+NO_BALANCE_UNTIL = 0.0                   # timestamp; 0 = sin cooldown
 # límite de posiciones abiertas simultáneas
 MAX_OPERACIONES_ACTIVAS  = 10
 # EMA / HMA

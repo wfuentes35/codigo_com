@@ -10,6 +10,7 @@ stop absoluto).
 """
 
 import asyncio
+import time
 import config
 from config import PAUSED, SHUTTING_DOWN
 from binance.helpers import round_step_size
@@ -61,6 +62,8 @@ async def _buy_market(sym, client, usdt, hint_price):
             await send_telegram_message(
                 f"⚠️ Sin saldo para comprar {sym}. Ajusta /set entry o recarga USDT."
             )
+            # --- activar cooldown global ---
+            config.NO_BALANCE_UNTIL = time.time() + config.INSUFFICIENT_BALANCE_COOLDOWN
             return None
         raise
 

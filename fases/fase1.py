@@ -8,6 +8,7 @@ fase 2 valide el pullback y ejecute la entrada.
 """
 
 import asyncio
+import time
 from binance.client import Client
 import pandas as pd
 
@@ -66,6 +67,15 @@ async def phase1_search_20_candidates(state_dict: dict):
     await asyncio.sleep(INITIAL_DELAY)  # espera inicial
     while not SHUTTING_DOWN.is_set():
         await PAUSED.wait()
+
+        # --- respeta cooldown de saldo ---
+        now = time.time()
+        if now < config.NO_BALANCE_UNTIL:
+            wait = config.NO_BALANCE_UNTIL - now
+            config.logger.info(f"[fase1] Cool‑off por saldo insuficiente: {wait:.0f}s")
+            await asyncio.sleep(wait)
+            continue
+
         if _active_positions(state_dict) >= config.MAX_OPERACIONES_ACTIVAS:
             config.logger.debug("[fase1] límite de operaciones activas alcanzado")
             await asyncio.sleep(SCAN_INTERVAL)
