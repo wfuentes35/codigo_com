@@ -23,7 +23,7 @@ from utils import (
 )
 
 # ----------------------------------------------------------------------
-SCAN_INTERVAL = 900  # segundos
+SCAN_INTERVAL = 1800  # segundos
 INITIAL_DELAY = 60  # segundos de espera tras el arranque
 
 def _active_positions(state: dict) -> int:
