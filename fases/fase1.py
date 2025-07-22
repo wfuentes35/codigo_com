@@ -21,6 +21,7 @@ from utils import (
     get_bollinger_bands,
     get_rsi,
     get_volume_avg,
+    cooldown_active,
 )
 
 # ----------------------------------------------------------------------
@@ -62,7 +63,7 @@ async def _is_candidate(sym: str, state: dict) -> bool:
     return False
 
 
-async def phase1_search_20_candidates(state_dict: dict):
+async def phase1_search_20_candidates(state_dict: dict, exclusion_dict: dict):
     """Escanea continuamente en busca de rupturas."""
     await asyncio.sleep(INITIAL_DELAY)  # espera inicial
     while not SHUTTING_DOWN.is_set():
@@ -85,6 +86,8 @@ async def phase1_search_20_candidates(state_dict: dict):
         added: list[str] = []
 
         async def _eval(sym: str):
+            if cooldown_active(exclusion_dict, sym):
+                return
             try:
                 ok = await _is_candidate(sym, state_dict)
                 if ok:

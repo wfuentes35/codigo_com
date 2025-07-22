@@ -55,6 +55,8 @@ COOLDOWN_CANDLES         = 2
 # --- control de saldo insuficiente ---
 INSUFFICIENT_BALANCE_COOLDOWN = 600      # 10 min
 NO_BALANCE_UNTIL = 0.0                   # timestamp; 0 = sin cooldown
+# bloqueo tras venta
+COOLDOWN_HOURS           = 12          # bloqueo post-venta (horas)
 # límite de posiciones abiertas simultáneas
 MAX_OPERACIONES_ACTIVAS  = 10
 # EMA / HMA

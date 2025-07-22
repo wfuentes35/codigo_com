@@ -25,6 +25,7 @@ from utils import (
     get_bollinger_bands, get_ema,
     get_step_size, get_market_filters, update_light_stops,
     trail_stop_delta, safe_market_sell, log_sale_to_excel,
+    set_cooldown,
 )
 from fases.fase3 import phase3_replenish
 
@@ -181,10 +182,10 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             await send_telegram_message(texto)
             if not DRY_RUN:
                 await log_sale_to_excel(sym, value, pnl, pct)
+                set_cooldown(exclusion_dict, sym, config.COOLDOWN_HOURS)
             logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
 
             state.pop(sym, None)
-            exclusion_dict[sym] = True
 
 
 async def phase2_monitor(state, client, exclusion_dict):

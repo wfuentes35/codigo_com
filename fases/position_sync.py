@@ -20,6 +20,7 @@ from utils import (
     get_all_usdt_symbols, get_step_size, send_telegram_message,
     update_light_stops, get_historical_data, get_ema,
     safe_market_sell, log_sale_to_excel,
+    set_cooldown,
 )
 from fases.fase3 import phase3_search_new_candidates
 
@@ -150,12 +151,12 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                     await send_telegram_message(texto)
                                     if not DRY_RUN:
                                         await log_sale_to_excel(symbol, value, pnl, pct)
+                                        set_cooldown(exclusion_dict, symbol, config.COOLDOWN_HOURS)
                                     logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f}")
                                 except Exception:
                                     logger.exception(f"Venta sync {symbol} falló")
 
                             state.pop(symbol, None)
-                            exclusion_dict[symbol] = True
                             await phase3_search_new_candidates(state, _ensure_int(1), exclusion_dict)
                     continue
 

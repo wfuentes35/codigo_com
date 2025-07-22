@@ -52,7 +52,7 @@ async def main():
     asyncio.create_task(supervise(watch_manual_file, state_dict, exclusion_dict))
     asyncio.create_task(delayed_sync())
     asyncio.create_task(supervise(phase2_monitor, state_dict, client, exclusion_dict))
-    asyncio.create_task(supervise(phase1_search_20_candidates, state_dict))
+    asyncio.create_task(supervise(phase1_search_20_candidates, state_dict, exclusion_dict))
 
     # Heart-beat
     while not SHUTTING_DOWN.is_set():
