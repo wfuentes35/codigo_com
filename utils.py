@@ -381,3 +381,25 @@ def trail_stop_delta(rec: dict, value_now: float, delta_usdt: float) -> bool:
         rec["stop_delta"] = new_stop
         return True
     return False
+
+
+from datetime import datetime, timedelta
+
+
+def set_cooldown(exclusion_dict: dict, symbol: str, hours: int):
+    """Guarda en exclusion_dict[symbol] un timestamp ISO-8601 indicando
+    hasta cuándo el símbolo queda bloqueado."""
+    until = datetime.utcnow() + timedelta(hours=hours)
+    exclusion_dict[symbol] = until.isoformat()
+
+
+def cooldown_active(exclusion_dict: dict, symbol: str) -> bool:
+    """Devuelve True si el símbolo sigue bloqueado.
+    Limpia la entrada cuando el cooldown ha expirado."""
+    ts = exclusion_dict.get(symbol)
+    if not ts:
+        return False
+    if datetime.utcnow() > datetime.fromisoformat(ts):
+        exclusion_dict.pop(symbol, None)
+        return False
+    return True
