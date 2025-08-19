@@ -168,6 +168,7 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                     "quantity":    qty,
                     "max_value":   current_value,
                     "stop_delta":  current_value - config.STOP_DELTA_USDT,
+                    "trailing_active": False,
                 }
                 await send_telegram_message(
                     f"📡 Sincronizada {symbol} • value={current_value:.2f} USDT"
