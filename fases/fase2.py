@@ -24,7 +24,7 @@ from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
     get_step_size, get_market_filters,
-    trail_stop_delta, safe_market_sell, log_sale_to_excel,
+    safe_market_sell, log_sale_to_excel,
     set_cooldown,
 )
 from fases.fase3 import phase3_replenish
@@ -128,14 +128,14 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             return
 
         state[sym] = {
-            "status":           "COMPRADA",
-            "entry_price":      trade["price"],
-            "entry_cost":       trade["entry_cost"],
-            "quantity":         trade["qty"],
-            "max_value":        trade["entry_cost"],
-            "stop_delta":       None,  # aún no se activa
-            "trailing_active":  False,
-            "trigger_price":    None,
+            "status":          "COMPRADA",
+            "entry_price":     trade["price"],
+            "entry_cost":      trade["entry_cost"],
+            "quantity":        trade["qty"],
+            "max_value":       trade["entry_cost"],
+            "stop_delta":      None,  # aún no se activa
+            "trailing_active": False,
+            "exit_reason":     None,
         }
         await send_telegram_message(
             f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
@@ -151,30 +151,42 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             return
         last = float(df["close"].iloc[-1])
         ema9 = get_ema(df["close"].astype(float), 9)
-        qty = rec.get("quantity", 0.0)
-        entry_price = rec.get("entry_price", 0.0)
-        value_now = qty * last
 
-        if not rec.get("trailing_active") and last > entry_price + config.STOP_DELTA_USDT + 1:
+        if "entry_value" in rec and "entry_cost" not in rec:
+            rec["entry_cost"] = rec.pop("entry_value")
+        qty = float(rec.get("quantity", 0.0))
+        entry_cost = float(rec.get("entry_cost", 0.0))
+        entry_price = float(rec.get("entry_price", 0.0))
+        rec.setdefault("trailing_active", False)
+        rec.setdefault("stop_delta", None)
+        rec.setdefault("exit_reason", None)
+
+        value_now = qty * last
+        trigger = entry_price + config.STOP_DELTA_USDT + 1.0
+
+        if not rec["trailing_active"] and last >= trigger:
             rec["trailing_active"] = True
-            rec["trigger_price"] = last
+            rec["max_value"] = max(float(rec.get("max_value", entry_cost)), value_now)
             rec["stop_delta"] = value_now - config.STOP_DELTA_USDT
             await send_log_message(
                 f"🔓 Trailing activado para {sym} a partir de {last:.2f}"
             )
-        elif rec.get("trailing_active"):
-            trail_stop_delta(rec, value_now, config.STOP_DELTA_USDT)
+        elif rec["trailing_active"]:
+            new_stop = value_now - config.STOP_DELTA_USDT
+            if rec["stop_delta"] is None or new_stop > rec["stop_delta"]:
+                rec["stop_delta"] = new_stop
+            if value_now > rec.get("max_value", 0.0):
+                rec["max_value"] = value_now
 
         # --- disparadores ---
         if last < ema9.iloc[-1]:
             rec["exit_reason"] = "EMA9-EXIT"; freed.append(sym)
-        elif rec.get("trailing_active") and value_now <= rec.get("stop_delta", 0.0):
+        elif rec["trailing_active"] and rec["stop_delta"] is not None and value_now <= rec["stop_delta"]:
             rec["exit_reason"] = "Δ-STOP"; freed.append(sym)
         elif value_now <= config.STOP_ABS_USDT:
             rec["exit_reason"] = "ABS-STOP"; freed.append(sym)
 
         if sym in freed:
-            qty = rec.get("quantity", 0.0)
             if not DRY_RUN:
                 ok, sell = await safe_market_sell(client, sym, qty)
                 if not ok:
@@ -185,15 +197,11 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
                     return
                 value = float(sell.get("cummulativeQuoteQty", 0.0))
                 fee = await _fee_to_usdt(client, sell.get("fills", []))
-                entry_cost = rec.get("entry_cost", 0.0)
-                pnl = value - fee - entry_cost
-                pct = 100 * pnl / entry_cost if entry_cost else 0.0
             else:
                 value = last * qty
                 fee = 0.0
-                entry_cost = rec.get("entry_cost", 0.0)
-                pnl = value - fee - entry_cost
-                pct = 100 * pnl / entry_cost if entry_cost else 0.0
+            pnl = value - fee - entry_cost
+            pct = 100 * pnl / entry_cost if entry_cost > 0 else 0.0
 
             exit_type = rec.pop("exit_reason", "EXIT")
             texto = (
@@ -209,6 +217,7 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
 
             state.pop(sym, None)
+            exclusion_dict[sym] = True
 
 
 async def phase2_monitor(state, client, exclusion_dict):

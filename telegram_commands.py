@@ -153,15 +153,16 @@ def build_telegram_app(
         if activos:
             body.append("💰 Posiciones abiertas:")
             for sym, rec in activos:
-                qty = rec["quantity"]
+                qty = float(rec.get("quantity", 0.0))
                 tkr = await asyncio.to_thread(config.client.get_symbol_ticker, symbol=sym)
                 last = float(tkr["price"])
-                pnl = last * qty - rec["entry_cost"]
-                pct = 100 * pnl / rec["entry_cost"]
-                body.append(
-                    f"{sym}: PnL={pnl:+.2f}\u202F({pct:+.2f}\u202F%) | "
-                    f"Δ-stop={rec['stop_delta']:.2f}"
-                )
+                entry_cost = float(rec.get("entry_cost", 0.0))
+                pnl = last * qty - entry_cost
+                pct = 100 * pnl / entry_cost if entry_cost > 0 else 0.0
+                delta = rec.get("stop_delta")
+                delta_txt = f"{delta:.2f}" if isinstance(delta, (int, float)) else "—"
+                line = f"{sym}: PnL={pnl:+.2f}\u202F({pct:+.2f}\u202F%) | Δ-stop={delta_txt}"
+                body.append(line)
 
         if reservadas:
             body.append("\n⏳ Reservadas:")
