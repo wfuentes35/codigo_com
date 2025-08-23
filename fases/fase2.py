@@ -161,27 +161,33 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
         rec.setdefault("stop_delta", None)
         rec.setdefault("exit_reason", None)
 
-        value_now = qty * last
-        trigger = entry_price + config.STOP_DELTA_USDT + 1.0
+        value_now = qty * float(last)
+        activation_value = entry_cost + config.STOP_DELTA_USDT + 1.0
 
-        if not rec["trailing_active"] and last >= trigger:
+        if not rec["trailing_active"] and value_now >= activation_value:
             rec["trailing_active"] = True
-            rec["max_value"] = max(float(rec.get("max_value", entry_cost)), value_now)
-            rec["stop_delta"] = value_now - config.STOP_DELTA_USDT
-            await send_log_message(
-                f"🔓 Trailing activado para {sym} a partir de {last:.2f}"
-            )
+            rec["max_value"] = value_now
+            base_stop = entry_cost + 1.0
+            first_stop = max(base_stop, value_now - config.STOP_DELTA_USDT)
+            rec["stop_delta"] = first_stop
+            try:
+                await send_log_message(
+                    f"📈 Trailing activado {sym}: valor={value_now:.2f} • stop={first_stop:.2f}"
+                )
+            except Exception:
+                pass
         elif rec["trailing_active"]:
-            new_stop = value_now - config.STOP_DELTA_USDT
-            if rec["stop_delta"] is None or new_stop > rec["stop_delta"]:
-                rec["stop_delta"] = new_stop
             if value_now > rec.get("max_value", 0.0):
                 rec["max_value"] = value_now
+                rec["stop_delta"] = max(
+                    float(rec.get("stop_delta", 0.0)),
+                    value_now - config.STOP_DELTA_USDT,
+                )
 
         # --- disparadores ---
         if last < ema9.iloc[-1]:
             rec["exit_reason"] = "EMA9-EXIT"; freed.append(sym)
-        elif rec["trailing_active"] and rec["stop_delta"] is not None and value_now <= rec["stop_delta"]:
+        elif rec.get("trailing_active") and rec.get("stop_delta") is not None and value_now <= rec["stop_delta"]:
             rec["exit_reason"] = "Δ-STOP"; freed.append(sym)
         elif value_now <= config.STOP_ABS_USDT:
             rec["exit_reason"] = "ABS-STOP"; freed.append(sym)
@@ -193,7 +199,7 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
                     logger.warning(f"No se vendió {sym}: {sell}")
                     await send_telegram_message(f"⚠️ Venta {sym} cancelada: {sell}")
                     state.pop(sym, None)
-                    exclusion_dict[sym] = True
+                    set_cooldown(exclusion_dict, sym, config.COOLDOWN_HOURS * 60)
                     return
                 value = float(sell.get("cummulativeQuoteQty", 0.0))
                 fee = await _fee_to_usdt(client, sell.get("fills", []))
@@ -213,11 +219,10 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             await send_telegram_message(texto)
             if not DRY_RUN:
                 await log_sale_to_excel(sym, value, pnl, pct)
-                set_cooldown(exclusion_dict, sym, config.COOLDOWN_HOURS)
             logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
 
             state.pop(sym, None)
-            exclusion_dict[sym] = True
+            set_cooldown(exclusion_dict, sym, config.COOLDOWN_HOURS * 60)
 
 
 async def phase2_monitor(state, client, exclusion_dict):
