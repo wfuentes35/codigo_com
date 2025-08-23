@@ -12,6 +12,7 @@ from config import (
 from utils import (
     get_all_usdt_symbols,
     send_telegram_message,
+    set_cooldown,
 )
 from fases.fase1 import _is_candidate   # reutilizamos la función
 
@@ -40,7 +41,7 @@ async def phase3_replenish(state_dict: dict,
         if ok:
             state_dict[sym] = "RESERVADA_PRE"
             added.append(sym)
-            exclusion_dict[sym] = {"ts": asyncio.get_event_loop().time()}
+            set_cooldown(exclusion_dict, sym, 10)
 
     await asyncio.gather(*[_eval(s) for s in symbols[:200]])  # solo top 200
 
