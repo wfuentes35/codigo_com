@@ -128,13 +128,14 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             return
 
         state[sym] = {
-            "status": "COMPRADA",
-            "entry_price": trade["price"],
-            "entry_cost": trade["entry_cost"],      # valor en USDT de la entrada
-            "quantity": trade["qty"],
-            "max_value": trade["entry_cost"],       # arranca en el valor de entrada
-            "trailing_active": False,               # aún NO activo
-            "stop_delta": None,                     # se definirá al activarse
+            "status":          "COMPRADA",
+            "entry_price":     trade["price"],
+            "entry_cost":      trade["entry_cost"],
+            "quantity":        trade["qty"],
+            "max_value":       trade["entry_cost"],
+            "stop_delta":      None,  # aún no se activa
+            "trailing_active": False,
+            "exit_reason":     None,
         }
         await send_telegram_message(
             f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
@@ -148,37 +149,40 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
         df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 12)
         if df is None or df.empty:
             return
+        last = float(df["close"].iloc[-1])
         ema9 = get_ema(df["close"].astype(float), 9)
 
-        last = float(df["close"].iloc[-1])
+        if "entry_value" in rec and "entry_cost" not in rec:
+            rec["entry_cost"] = rec.pop("entry_value")
         qty = float(rec.get("quantity", 0.0))
-
-        # valor actual de la posición
-        value_now = qty * last
-
-        # por compatibilidad, prioriza 'entry_cost'
-        entry_cost = rec.get("entry_cost", rec.get("entry_value", 0.0))
-
-        # umbral de activación: entrada + Δ + 1 USDT
-        trigger_value = float(entry_cost) + float(config.STOP_DELTA_USDT) + 1.0
-
+        entry_cost = float(rec.get("entry_cost", 0.0))
+        entry_price = float(rec.get("entry_price", 0.0))
         rec.setdefault("trailing_active", False)
         rec.setdefault("stop_delta", None)
         rec.setdefault("exit_reason", None)
 
-        # --- ACTIVACIÓN por valor ---
-        if not rec.get("trailing_active") and value_now >= trigger_value:
+        value_now = qty * float(last)
+        activation_value = entry_cost + config.STOP_DELTA_USDT + 1.0
+
+        if not rec["trailing_active"] and value_now >= activation_value:
             rec["trailing_active"] = True
             rec["max_value"] = value_now
-            rec["stop_delta"] = value_now - float(config.STOP_DELTA_USDT)
-            logger.info(
-                f"[{sym}] Trailing ACTIVADO • value={value_now:.2f} • Δ-stop={rec['stop_delta']:.2f}"
-            )
-
-        # --- SEGUIMIENTO: solo subir cuando hay nuevo máximo ---
-        if rec.get("trailing_active") and value_now > rec.get("max_value", 0.0):
-            rec["max_value"] = value_now
-            rec["stop_delta"] = value_now - float(config.STOP_DELTA_USDT)
+            base_stop = entry_cost + 1.0
+            first_stop = max(base_stop, value_now - config.STOP_DELTA_USDT)
+            rec["stop_delta"] = first_stop
+            try:
+                await send_log_message(
+                    f"📈 Trailing activado {sym}: valor={value_now:.2f} • stop={first_stop:.2f}"
+                )
+            except Exception:
+                pass
+        elif rec["trailing_active"]:
+            if value_now > rec.get("max_value", 0.0):
+                rec["max_value"] = value_now
+                rec["stop_delta"] = max(
+                    float(rec.get("stop_delta", 0.0)),
+                    value_now - config.STOP_DELTA_USDT,
+                )
 
         # --- disparadores ---
         if last < ema9.iloc[-1]:
