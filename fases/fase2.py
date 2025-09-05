@@ -30,12 +30,6 @@ from utils import (
 from fases.fase3 import phase3_replenish
 
 
-async def send_log_message(msg: str):
-    """Envía un mensaje a Telegram y lo registra en el log."""
-    logger.info(msg)
-    await send_telegram_message(msg)
-
-
 async def _fee_to_usdt(client, fills, quote="USDT") -> float:
     total = 0.0
     for f in fills:
@@ -128,14 +122,13 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             return
 
         state[sym] = {
-            "status":           "COMPRADA",
-            "entry_price":      trade["price"],
-            "entry_cost":       trade["entry_cost"],
-            "quantity":         trade["qty"],
-            "max_value":        trade["entry_cost"],
-            "stop_delta":       None,  # aún no se activa
-            "trailing_active":  False,
-            "trailing_trigger": trade["price"] + config.STOP_DELTA_USDT + 1,
+            "status":      "COMPRADA",
+            "entry_price": trade["price"],
+            "entry_cost":  trade["entry_cost"],
+            "quantity":    trade["qty"],
+            "max_value":   trade["entry_cost"],
+            "stop_delta":  trade["entry_cost"] - config.STOP_DELTA_USDT,
+            "trailing_active": False,
         }
         await send_telegram_message(
             f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
@@ -153,19 +146,10 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
         ema9 = get_ema(df["close"].astype(float), 9)
         value_now = rec["quantity"] * last
 
-        if not rec["trailing_active"] and last >= rec["trailing_trigger"]:
-            rec["trailing_active"] = True
-            rec["stop_delta"] = rec["quantity"] * last - config.STOP_DELTA_USDT
-            await send_log_message(
-                f"🔓 Trailing activado para {sym} a partir de {last:.2f}"
-            )
-
         # --- disparadores ---
         if last < ema9.iloc[-1]:
             rec["exit_reason"] = "EMA9-EXIT"; freed.append(sym)
-        elif rec["trailing_active"] and update_light_stops(
-            rec, rec["quantity"], last, config.STOP_DELTA_USDT
-        ):
+        elif update_light_stops(rec, rec["quantity"], last, config.STOP_DELTA_USDT):
             rec["exit_reason"] = "Δ-STOP"; freed.append(sym)
         elif value_now <= config.STOP_ABS_USDT:
             rec["exit_reason"] = "ABS-STOP"; freed.append(sym)
