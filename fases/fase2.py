@@ -23,7 +23,7 @@ from config import (
 from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
-    get_step_size, get_market_filters,
+    get_step_size, get_market_filters, update_light_stops,
     trail_stop_delta, safe_market_sell, log_sale_to_excel,
     set_cooldown,
 )
@@ -135,7 +135,7 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             "max_value":        trade["entry_cost"],
             "stop_delta":       None,  # aún no se activa
             "trailing_active":  False,
-            "trigger_price":    None,
+            "trailing_trigger": trade["price"] + config.STOP_DELTA_USDT + 1,
         }
         await send_telegram_message(
             f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
@@ -151,32 +151,28 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             return
         last = float(df["close"].iloc[-1])
         ema9 = get_ema(df["close"].astype(float), 9)
-        qty = rec.get("quantity", 0.0)
-        entry_price = rec.get("entry_price", 0.0)
-        value_now = qty * last
+        value_now = rec["quantity"] * last
 
-        if not rec.get("trailing_active") and last > entry_price + config.STOP_DELTA_USDT + 1:
+        if not rec["trailing_active"] and last >= rec["trailing_trigger"]:
             rec["trailing_active"] = True
-            rec["trigger_price"] = last
-            rec["stop_delta"] = value_now - config.STOP_DELTA_USDT
+            rec["stop_delta"] = rec["quantity"] * last - config.STOP_DELTA_USDT
             await send_log_message(
                 f"🔓 Trailing activado para {sym} a partir de {last:.2f}"
             )
-        elif rec.get("trailing_active"):
-            trail_stop_delta(rec, value_now, config.STOP_DELTA_USDT)
 
         # --- disparadores ---
         if last < ema9.iloc[-1]:
             rec["exit_reason"] = "EMA9-EXIT"; freed.append(sym)
-        elif rec.get("trailing_active") and value_now <= rec.get("stop_delta", 0.0):
+        elif rec["trailing_active"] and update_light_stops(
+            rec, rec["quantity"], last, config.STOP_DELTA_USDT
+        ):
             rec["exit_reason"] = "Δ-STOP"; freed.append(sym)
         elif value_now <= config.STOP_ABS_USDT:
             rec["exit_reason"] = "ABS-STOP"; freed.append(sym)
 
         if sym in freed:
-            qty = rec.get("quantity", 0.0)
             if not DRY_RUN:
-                ok, sell = await safe_market_sell(client, sym, qty)
+                ok, sell = await safe_market_sell(client, sym, rec["quantity"])
                 if not ok:
                     logger.warning(f"No se vendió {sym}: {sell}")
                     await send_telegram_message(f"⚠️ Venta {sym} cancelada: {sell}")
@@ -185,15 +181,13 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
                     return
                 value = float(sell.get("cummulativeQuoteQty", 0.0))
                 fee = await _fee_to_usdt(client, sell.get("fills", []))
-                entry_cost = rec.get("entry_cost", 0.0)
-                pnl = value - fee - entry_cost
-                pct = 100 * pnl / entry_cost if entry_cost else 0.0
+                pnl = value - fee - rec["entry_cost"]
+                pct = 100 * pnl / rec["entry_cost"]
             else:
-                value = last * qty
+                value = last * rec["quantity"]
                 fee = 0.0
-                entry_cost = rec.get("entry_cost", 0.0)
-                pnl = value - fee - entry_cost
-                pct = 100 * pnl / entry_cost if entry_cost else 0.0
+                pnl = value - fee - rec["entry_cost"]
+                pct = 100 * pnl / rec["entry_cost"]
 
             exit_type = rec.pop("exit_reason", "EXIT")
             texto = (
