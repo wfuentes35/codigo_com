@@ -229,25 +229,12 @@ def update_light_stops(rec: dict, qty: float, last_price: float,
 
     value_now = qty * last_price
 
-    # variable de activación por símbolo
-    active = rec.setdefault("trailing_active", False)
-
-    # activar solo cuando el precio supere entry + stop_delta + 1
-    if not active:
-        activation_price = rec.get("entry_price", 0) + stop_delta_usdt + 1
-        if last_price >= activation_price:
-            rec["trailing_active"] = True
-            rec["max_value"] = value_now
-            rec["stop_delta"] = value_now - stop_delta_usdt
-        else:
-            return False
-
-    # inicializar campos faltantes (posiciones legacy una vez activadas)
+    # inicializar campos faltantes (posiciones legacy)
     if "max_value" not in rec:
         rec["max_value"] = value_now
     if "stop_delta" not in rec:
         rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
-        return False
+        return False  # no puede activarse en la primera pasada
 
     # trailing Δ-stop
     if value_now > rec["max_value"]:
