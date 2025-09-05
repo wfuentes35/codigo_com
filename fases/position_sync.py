@@ -22,9 +22,6 @@ from utils import (
     safe_market_sell, log_sale_to_excel,
     set_cooldown,
 )
-async def send_log_message(msg: str):
-    logger.info(msg)
-    await send_telegram_message(msg)
 from fases.fase3 import phase3_search_new_candidates
 
 _BIN_SEM = asyncio.Semaphore(3)
@@ -124,9 +121,7 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                             logger.warning(f"Venta sync {symbol} falló: {sell}")
                                             await send_telegram_message(f"⚠️ Venta {symbol} cancelada: {sell}")
                                             state.pop(symbol, None)
-                                            set_cooldown(
-                                                exclusion_dict, symbol, config.COOLDOWN_HOURS * 60
-                                            )
+                                            exclusion_dict[symbol] = True
                                             continue
                                         value = float(sell.get("cummulativeQuoteQty", 0.0))
                                         fee = 0.0
@@ -158,9 +153,7 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                                     await send_telegram_message(texto)
                                     if not DRY_RUN:
                                         await log_sale_to_excel(symbol, value, pnl, pct)
-                                        set_cooldown(
-                                            exclusion_dict, symbol, config.COOLDOWN_HOURS * 60
-                                        )
+                                        set_cooldown(exclusion_dict, symbol, config.COOLDOWN_HOURS)
                                     logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f}")
                                 except Exception:
                                     logger.exception(f"Venta sync {symbol} falló")
@@ -171,35 +164,18 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
 
                 # -------- registrar nueva posición --------
                 state[symbol] = {
-                    "status":          "COMPRADA_SYNC",
-                    "entry_price":     price,
-                    "entry_cost":      current_value,
-                    "quantity":        qty,
-                    "max_value":       current_value,
+                    "status":         "COMPRADA_SYNC",
+                    "entry_price":    price,
+                    "entry_cost":     current_value,
+                    "quantity":       qty,
+                    "max_value":      current_value,
+                    "stop_delta":     None,
                     "trailing_active": False,
-                    "stop_delta":      None,
-                    "exit_reason":     None,
+                    "exit_reason":    None,
                 }
                 await send_telegram_message(
                     f"📡 Sincronizada {symbol} • value={current_value:.2f} USDT"
                 )
-                rec = state[symbol]
-                if "entry_value" in rec and "entry_cost" not in rec:
-                    rec["entry_cost"] = rec.pop("entry_value")
-
-                activation_value = rec["entry_cost"] + config.STOP_DELTA_USDT + 1.0
-                if current_value >= activation_value:
-                    base_stop = rec["entry_cost"] + 1.0
-                    first_stop = max(base_stop, current_value - config.STOP_DELTA_USDT)
-                    rec["trailing_active"] = True
-                    rec["max_value"] = current_value
-                    rec["stop_delta"] = first_stop
-                    try:
-                        await send_log_message(
-                            f"📡 Trailing activado (sync) {symbol}: value={current_value:.2f} • stop={first_stop:.2f}"
-                        )
-                    except Exception:
-                        pass
         except Exception:
             logger.exception("[sync] crash")
 
