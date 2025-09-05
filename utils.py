@@ -18,7 +18,6 @@ import telegram.error
 from binance import exceptions as bexc
 from binance.client import Client
 import math
-from datetime import datetime, timedelta, timezone
 from config import (
     client, logger, telegram_bot, TELEGRAM_CHAT_ID,
     STOP_ABS_HIGH_FACTOR, STOP_ABS_HIGH_THRESHOLD,
@@ -229,29 +228,32 @@ def update_light_stops(rec: dict, qty: float, last_price: float,
     """Actualiza el trailing Δ-stop y devuelve ``True`` si se activa."""
 
     value_now = qty * last_price
-    active = rec.setdefault("trailing_active", False)
-    entry_cost = float(rec.get("entry_cost", rec.get("entry_value", 0.0)))
 
-    # activar solo cuando el valor supere entry_cost + stop_delta + 1
+    # variable de activación por símbolo
+    active = rec.setdefault("trailing_active", False)
+
+    # activar solo cuando el precio supere entry + stop_delta + 1
     if not active:
-        activation_value = entry_cost + stop_delta_usdt + 1.0
-        if value_now >= activation_value:
+        activation_price = rec.get("entry_price", 0) + stop_delta_usdt + 1
+        if last_price >= activation_price:
             rec["trailing_active"] = True
             rec["max_value"] = value_now
-            base_stop = entry_cost + 1.0
-            rec["stop_delta"] = max(base_stop, value_now - stop_delta_usdt)
+            rec["stop_delta"] = value_now - stop_delta_usdt
         else:
             return False
 
+    # inicializar campos faltantes (posiciones legacy una vez activadas)
     if "max_value" not in rec:
         rec["max_value"] = value_now
-    if "stop_delta" not in rec or rec["stop_delta"] is None:
+    if "stop_delta" not in rec:
         rec["stop_delta"] = rec["max_value"] - stop_delta_usdt
         return False
 
+    # trailing Δ-stop
     if value_now > rec["max_value"]:
         rec["max_value"] = value_now
-        rec["stop_delta"] = max(rec["stop_delta"], value_now - stop_delta_usdt)
+        # trailing Δ-stop sólo sube
+        trail_stop_delta(rec, value_now, stop_delta_usdt)
 
     return value_now <= rec["stop_delta"]
 
@@ -394,60 +396,23 @@ def trail_stop_delta(rec: dict, value_now: float, delta_usdt: float) -> bool:
     return False
 
 
-def _parse_expiry_any(ts):
-    """
-    Acepta:
-      - str ISO8601 (con o sin 'Z')
-      - datetime (naive o con tz)
-      - epoch (int/float, segundos)
-    Devuelve datetime UTC naive o None si no se puede parsear.
-    """
-    if ts is None:
-        return None
-    if isinstance(ts, datetime):
-        return (
-            ts if ts.tzinfo is None
-            else ts.astimezone(timezone.utc).replace(tzinfo=None)
-        )
-    if isinstance(ts, (int, float)):
-        return datetime.utcfromtimestamp(ts)
-    if isinstance(ts, str):
-        s = ts.strip()
-        try:
-            if s.endswith("Z"):
-                s = s[:-1]
-            dt = datetime.fromisoformat(s)
-            return (
-                dt if dt.tzinfo is None
-                else dt.astimezone(timezone.utc).replace(tzinfo=None)
-            )
-        except Exception:
-            return None
-    return None
+from datetime import datetime, timedelta
 
 
-def set_cooldown(exclusion_dict: dict, sym: str, minutes: int) -> str:
-    """
-    Fija cooldown en ISO8601 (UTC). Centraliza el formato para evitar mezcla de tipos.
-    """
-    expiry = (datetime.utcnow() + timedelta(minutes=minutes)).isoformat()
-    exclusion_dict[sym] = expiry
-    return expiry
+def set_cooldown(exclusion_dict: dict, symbol: str, hours: int):
+    """Guarda en exclusion_dict[symbol] un timestamp ISO-8601 indicando
+    hasta cuándo el símbolo queda bloqueado."""
+    until = datetime.utcnow() + timedelta(hours=hours)
+    exclusion_dict[symbol] = until.isoformat()
 
 
-def cooldown_active(exclusion_dict: dict, sym: str) -> bool:
-    """
-    True si el símbolo sigue en cooldown.
-    Si ya expiró o el valor es inválido, limpia la entrada y devuelve False.
-    """
-    ts = exclusion_dict.get(sym)
+def cooldown_active(exclusion_dict: dict, symbol: str) -> bool:
+    """Devuelve True si el símbolo sigue bloqueado.
+    Limpia la entrada cuando el cooldown ha expirado."""
+    ts = exclusion_dict.get(symbol)
     if not ts:
         return False
-    expires = _parse_expiry_any(ts)
-    if expires is None:
-        exclusion_dict.pop(sym, None)
-        return False
-    if datetime.utcnow() > expires:
-        exclusion_dict.pop(sym, None)
+    if datetime.utcnow() > datetime.fromisoformat(ts):
+        exclusion_dict.pop(symbol, None)
         return False
     return True
