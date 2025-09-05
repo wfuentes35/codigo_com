@@ -128,7 +128,6 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             "quantity":    trade["qty"],
             "max_value":   trade["entry_cost"],
             "stop_delta":  trade["entry_cost"] - config.STOP_DELTA_USDT,
-            "trailing_active": False,
         }
         await send_telegram_message(
             f"✅ COMPRA {sym} @ {trade['price']:.4f} (Qty {trade['qty']:.4f})\n"
