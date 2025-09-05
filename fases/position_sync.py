@@ -83,8 +83,6 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 light_mode      = config.LIGHT_MODE
 
                 rec = state.get(symbol)
-                if isinstance(rec, dict) and "entry_value" in rec and "entry_cost" not in rec:
-                    rec["entry_cost"] = rec.pop("entry_value")
 
                 # -------- posición ya sincronizada --------
                 if rec and isinstance(rec, dict):
@@ -164,14 +162,14 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
 
                 # -------- registrar nueva posición --------
                 state[symbol] = {
-                    "status":         "COMPRADA_SYNC",
-                    "entry_price":    price,
-                    "entry_cost":     current_value,
-                    "quantity":       qty,
-                    "max_value":      current_value,
-                    "stop_delta":     None,
+                    "status":      "COMPRADA_SYNC",
+                    "entry_price": price,
+                    "entry_cost":  current_value,
+                    "quantity":    qty,
+                    "max_value":   current_value,
+                    "stop_delta":  current_value - config.STOP_DELTA_USDT,
                     "trailing_active": False,
-                    "exit_reason":    None,
+                    "trigger_price": None,
                 }
                 await send_telegram_message(
                     f"📡 Sincronizada {symbol} • value={current_value:.2f} USDT"
