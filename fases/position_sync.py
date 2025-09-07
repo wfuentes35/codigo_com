@@ -19,8 +19,8 @@ from config import (
 from utils import (
     get_all_usdt_symbols, get_step_size, send_telegram_message,
     update_light_stops, get_historical_data, get_ema,
-    safe_market_sell, log_sale_to_excel,
-    set_cooldown,
+    safe_market_sell, set_cooldown,
+    process_sell_and_notify,
 )
 from fases.fase3 import phase3_search_new_candidates
 
@@ -112,49 +112,12 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                             async with _BIN_SEM:
                                 step = await get_step_size(symbol)
                                 qty_sell = round_step_size(qty, step)
-                                try:
-                                    if not DRY_RUN:
-                                        ok, sell = await safe_market_sell(client, symbol, qty_sell)
-                                        if not ok:
-                                            logger.warning(f"Venta sync {symbol} falló: {sell}")
-                                            await send_telegram_message(f"⚠️ Venta {symbol} cancelada: {sell}")
-                                            state.pop(symbol, None)
-                                            exclusion_dict[symbol] = True
-                                            continue
-                                        value = float(sell.get("cummulativeQuoteQty", 0.0))
-                                        fee = 0.0
-                                        for f in sell.get("fills", []):
-                                            comm = float(f["commission"])
-                                            if f["commissionAsset"] == "USDT":
-                                                fee += comm
-                                            elif f["commissionAsset"] == "BNB":
-                                                price_bnb = float((await asyncio.to_thread(
-                                                    client.get_symbol_ticker,
-                                                    symbol="BNBUSDT",
-                                                ))["price"])
-                                                fee += comm * price_bnb
-                                            else:
-                                                fee += comm * float(f["price"])
-                                    else:
-                                        value = price * qty_sell
-                                        fee = 0.0
-                                    entry_cost = rec.get("entry_cost", current_value)
-                                    pnl = value - fee - entry_cost
-                                    pct = 100 * pnl / entry_cost
-                                    exit_type = rec.pop("exit_reason", "EXIT")
-                                    texto = (
-                                        f"🚨 {exit_type} {symbol} @ {value/qty_sell:.4f}\n"
-                                        f"🔻 Valor vendido: {value:.2f}\u202FUSDT\n"
-                                        f"🧾 Fee: {fee:.4f}\u202FUSDT\n"
-                                        f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
-                                    )
-                                    await send_telegram_message(texto)
-                                    if not DRY_RUN:
-                                        await log_sale_to_excel(symbol, value, pnl, pct)
-                                        set_cooldown(exclusion_dict, symbol, config.COOLDOWN_HOURS)
-                                    logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f}")
-                                except Exception:
-                                    logger.exception(f"Venta sync {symbol} falló")
+                                exit_reason = rec.pop("exit_reason", "EXIT")
+                                # La cantidad a vender es `qty`, no `qty_sell` para el PnL
+                                rec["quantity"] = qty
+                                await process_sell_and_notify(
+                                    client, symbol, rec, price, exit_reason, exclusion_dict
+                                )
 
                             state.pop(symbol, None)
                             await phase3_search_new_candidates(state, _ensure_int(1), exclusion_dict)

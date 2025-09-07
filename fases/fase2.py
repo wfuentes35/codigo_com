@@ -23,29 +23,10 @@ from config import (
 from utils import (
     get_historical_data, send_telegram_message,
     get_bollinger_bands, get_ema,
-    get_step_size, get_market_filters, update_light_stops,
-    trail_stop_delta, safe_market_sell, log_sale_to_excel,
-    set_cooldown,
+    get_market_filters, update_light_stops,
+    set_cooldown, fee_to_usdt, process_sell_and_notify,
 )
 from fases.fase3 import phase3_replenish
-
-
-async def _fee_to_usdt(client, fills, quote="USDT") -> float:
-    total = 0.0
-    for f in fills:
-        comm = float(f["commission"])
-        asset = f["commissionAsset"]
-        if comm == 0:
-            continue
-        if asset == quote:
-            total += comm
-        elif asset == "BNB":
-            bnb_price = float((await asyncio.to_thread(
-                client.get_symbol_ticker, symbol="BNBUSDT"))["price"])
-            total += comm * bnb_price
-        else:
-            total += comm * float(f["price"])
-    return total
 
 
 async def _buy_market(sym, client, usdt, hint_price):
@@ -70,7 +51,7 @@ async def _buy_market(sym, client, usdt, hint_price):
 
     qty = float(o["executedQty"])
     cost = float(o["cummulativeQuoteQty"])
-    fee = await _fee_to_usdt(client, o.get("fills", []))
+    fee = await fee_to_usdt(client, o.get("fills", []))
     price = cost / qty if qty else hint_price
     return dict(qty=qty, price=price, entry_cost=cost + fee, commission=fee)
 
@@ -92,13 +73,23 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
 
     # -------- ENTRADA --------
     if status == "RESERVADA_PRE":
-        df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 60)
-        if df is None or len(df) < 30:
+        # 1. Obtener datos suficientes para EMAs largas
+        df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 250)
+        if df is None or len(df) < 201:
             return
         close = df["close"].astype(float)
-        high = df["high"].astype(float)
-        low = df["low"].astype(float)
-        volume = df["volume"].astype(float)
+
+        # 2. Implementar filtro de tendencia (EMA50 > EMA200)
+        ema50 = get_ema(close, 50)
+        ema200 = get_ema(close, 200)
+
+        if ema50.iloc[-1] <= ema200.iloc[-1]:
+            logger.info(f"Filtro tendencia {sym}: EMA50 <= EMA200. Descartado.")
+            state.pop(sym, None)  # Eliminar para no reevaluar
+            return
+
+        # 3. Continuar con la lógica de pullback si la tendencia es alcista
+        high = df["high"].astype(float); low = df["low"].astype(float)
 
         bb_upper, _, _ = get_bollinger_bands(close)
         ema9 = get_ema(close, 9)
@@ -154,36 +145,10 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
             rec["exit_reason"] = "ABS-STOP"; freed.append(sym)
 
         if sym in freed:
-            if not DRY_RUN:
-                ok, sell = await safe_market_sell(client, sym, rec["quantity"])
-                if not ok:
-                    logger.warning(f"No se vendió {sym}: {sell}")
-                    await send_telegram_message(f"⚠️ Venta {sym} cancelada: {sell}")
-                    state.pop(sym, None)
-                    exclusion_dict[sym] = True
-                    return
-                value = float(sell.get("cummulativeQuoteQty", 0.0))
-                fee = await _fee_to_usdt(client, sell.get("fills", []))
-                pnl = value - fee - rec["entry_cost"]
-                pct = 100 * pnl / rec["entry_cost"]
-            else:
-                value = last * rec["quantity"]
-                fee = 0.0
-                pnl = value - fee - rec["entry_cost"]
-                pct = 100 * pnl / rec["entry_cost"]
-
-            exit_type = rec.pop("exit_reason", "EXIT")
-            texto = (
-                f"🚨 {exit_type} {sym} @ {last:.4f}\n"
-                f"🔻 Valor vendido: {value:.2f}\u202FUSDT\n"
-                f"🧾 Fee: {fee:.4f}\u202FUSDT\n"
-                f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
+            exit_reason = rec.pop("exit_reason", "EXIT")
+            await process_sell_and_notify(
+                client, sym, rec, last, exit_reason, exclusion_dict
             )
-            await send_telegram_message(texto)
-            if not DRY_RUN:
-                await log_sale_to_excel(sym, value, pnl, pct)
-                set_cooldown(exclusion_dict, sym, config.COOLDOWN_HOURS)
-            logger.info(f"SELL {sym} pnl={pnl:.4f} pct={pct:.2f}")
 
             state.pop(sym, None)
 

@@ -311,21 +311,37 @@ async def get_full_market_filters(client: Client, symbol: str):
 
 async def safe_market_sell(client: Client, symbol: str, raw_qty: float):
     """Safely execute a market sell respecting filters."""
+    from config import DRY_RUN
     step, min_qty, min_notional = await get_full_market_filters(client, symbol)
     available = min(raw_qty, await get_available_qty(client, symbol))
 
     qty = available - (available % step)
-    qty = round(qty, int(-round(math.log10(step))))
+    precision = int(-round(math.log10(step))) if step > 0 else 0
+    qty = round(qty, precision)
 
     if qty < min_qty - 1e-12:
         return False, f"qty<{min_qty} LOT_SIZE (dust)"
 
+    price = 0.0
+    # Se necesita el precio para la simulación en DRY_RUN o para el filtro MIN_NOTIONAL
+    if DRY_RUN or min_notional:
+        try:
+            price = float((await asyncio.to_thread(
+                client.get_symbol_ticker, symbol=symbol))["price"])
+        except bexc.BinanceAPIException as e:
+            return False, f"error al obtener ticker para venta: {e.code}:{e.message}"
+
     if min_notional:
-        price = float((await asyncio.to_thread(
-            client.get_symbol_ticker, symbol=symbol))["price"])
         if qty * price < min_notional - 1e-8:
             return False, f"valor<{min_notional} MIN_NOTIONAL"
 
+    if DRY_RUN:
+        return True, {
+            "symbol": symbol, "side": "SELL", "type": "MARKET",
+            "executedQty": str(qty),
+            "cummulativeQuoteQty": str(qty * price),
+            "fills": []
+        }
     try:
         order = await asyncio.to_thread(
             client.create_order,
@@ -335,6 +351,66 @@ async def safe_market_sell(client: Client, symbol: str, raw_qty: float):
     except bexc.BinanceAPIException as e:
         return False, f"error {e.code}:{e.message}"
 
+
+async def fee_to_usdt(client, fills, quote="USDT") -> float:
+    """Calcula la comisión total de una orden en USDT."""
+    total = 0.0
+    for f in fills:
+        comm = float(f["commission"])
+        asset = f["commissionAsset"]
+        if comm == 0:
+            continue
+        if asset == quote:
+            total += comm
+        elif asset == "BNB":
+            bnb_price = float((await asyncio.to_thread(
+                client.get_symbol_ticker, symbol="BNBUSDT"))["price"])
+            total += comm * bnb_price
+        else:
+            # Para ventas, el precio del fill es en USDT
+            total += comm * float(f["price"])
+    return total
+
+
+async def process_sell_and_notify(client, symbol: str, rec: dict, exit_price: float, exit_reason: str, exclusion_dict: dict):
+    """
+    Procesa una venta: ejecuta la orden, calcula PnL, notifica y registra.
+    """
+    from config import DRY_RUN, COOLDOWN_HOURS
+
+    qty = rec["quantity"]
+    entry_cost = rec.get("entry_cost", 0.0)
+    if entry_cost == 0:
+        logger.error(f"Venta {symbol} abortada: entry_cost es cero.")
+        return
+
+    ok, sell = await safe_market_sell(client, symbol, qty)
+    if not ok:
+        logger.warning(f"Venta {symbol} falló: {sell}")
+        await send_telegram_message(f"⚠️ Venta {symbol} cancelada: {sell}")
+        exclusion_dict[symbol] = True # Evitar reintentos
+        return
+
+    value = float(sell.get("cummulativeQuoteQty", 0.0))
+    fee = await fee_to_usdt(client, sell.get("fills", []))
+    pnl = value - fee - entry_cost
+    pct = (100 * pnl / entry_cost) if entry_cost else 0
+    sold_qty = float(sell.get("executedQty", 0.0))
+    display_price = (value / sold_qty) if sold_qty > 0 else exit_price
+
+    texto = (
+        f"🚨 {exit_reason} {symbol} @ {display_price:.4f}\n"
+        f"🔻 Valor vendido: {value:.2f}\u202FUSDT\n"
+        f"🧾 Fee: {fee:.4f}\u202FUSDT\n"
+        f"📊 PnL: {pnl:.2f}\u202FUSDT ({pct:.2f}\u202F%)"
+    )
+    await send_telegram_message(texto)
+
+    if not DRY_RUN:
+        await log_sale_to_excel(symbol, value, pnl, pct)
+        set_cooldown(exclusion_dict, symbol, COOLDOWN_HOURS)
+
+    logger.info(f"SELL {symbol} pnl={pnl:.4f} pct={pct:.2f} reason={exit_reason}")
 
 
 import pandas as pd, asyncio, logging
