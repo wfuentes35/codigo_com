@@ -87,13 +87,13 @@ async def sync_positions(state: dict, client, exclusion_dict: dict, interval: in
                 # -------- posición ya sincronizada --------
                 if rec and isinstance(rec, dict):
                     if light_mode:
-                        df = await get_historical_data(symbol, config.KLINE_INTERVAL_FASE2, 12)
+                        df = await get_historical_data(symbol, config.KLINE_INTERVAL_FASE2, 30)
                         triggers = []
                         if df is not None and not df.empty:
                             closes = df["close"].astype(float)
-                            ema9 = get_ema(closes, 9)
-                            if price <= ema9.iloc[-1]:
-                                rec["exit_reason"] = "EMA9-EXIT"
+                            ema_long = get_ema(closes, config.EMA_LONG)
+                            if price <= ema_long.iloc[-1]:
+                                rec["exit_reason"] = f"EMA{config.EMA_LONG}-EXIT"
                                 triggers.append(symbol)
 
                         value_now = qty * price

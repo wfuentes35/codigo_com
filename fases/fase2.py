@@ -129,16 +129,16 @@ async def _evaluate(sym, state, client, freed, exclusion_dict):
 
     # -------- GESTIÓN --------
     if isinstance(rec, dict) and rec.get("status", "").startswith("COMPRADA"):
-        df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 12)
+        df = await get_historical_data(sym, KLINE_INTERVAL_FASE2, 30)
         if df is None or df.empty:
             return
         last = float(df["close"].iloc[-1])
-        ema9 = get_ema(df["close"].astype(float), 9)
+        ema_long = get_ema(df["close"].astype(float), config.EMA_LONG)
         value_now = rec["quantity"] * last
 
         # --- disparadores ---
-        if last < ema9.iloc[-1]:
-            rec["exit_reason"] = "EMA9-EXIT"; freed.append(sym)
+        if last < ema_long.iloc[-1]:
+            rec["exit_reason"] = f"EMA{config.EMA_LONG}-EXIT"; freed.append(sym)
         elif update_light_stops(rec, rec["quantity"], last, config.STOP_DELTA_USDT):
             rec["exit_reason"] = "Δ-STOP"; freed.append(sym)
         elif value_now <= config.STOP_ABS_USDT:

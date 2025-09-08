@@ -7,8 +7,8 @@ Bot asincrónico para trading spot en Binance.  Utiliza una estrategia en varias
    positivo.
 2. **Fase 2** monitoriza los símbolos marcados y espera un pullback hacia la
    zona comprendida entre la banda superior y la EMA(9).  Si el precio rebota
-   desde ese nivel se compra y la posición se gestiona con trailing por ATR,
-   Δ‑stop y stop absoluto.
+   desde ese nivel se compra y la posición se gestiona con un stop por cruce de
+   la EMA(24), Δ‑stop y stop absoluto.
 3. **Fase 3** repone candidatos cuando hay huecos disponibles.
 4. **Sync** mantiene el estado real de las posiciones y aplica stops en modo
    liviano cuando se opera desde otro dispositivo.
