@@ -144,9 +144,17 @@ def build_telegram_app(
             if isinstance(r, dict) and r.get("status") == "RESERVADA_PRE"
         ]
 
+        account = await asyncio.to_thread(config.client.get_account)
+        usdt_balance = 0.0
+        for bal in account["balances"]:
+            if bal["asset"] == "USDT":
+                usdt_balance = float(bal["free"])
+                break
+
         header = (
             f"🎯 {len(activos)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas\n"
-            f"Δ‑stop={config.STOP_DELTA_USDT}  stop_abs={config.STOP_ABS_USDT}"
+            f"💵 Saldo USDT: {usdt_balance:.2f}\n"
+            f"Δ‑stop={config.STOP_DELTA_USDT} USDT  stop_abs={config.STOP_ABS_USDT} USDT"
         )
 
         body = []
