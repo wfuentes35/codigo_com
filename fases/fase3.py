@@ -40,7 +40,6 @@ async def phase3_replenish(state_dict: dict,
         if ok:
             state_dict[sym] = "RESERVADA_PRE"
             added.append(sym)
-            exclusion_dict[sym] = {"ts": asyncio.get_event_loop().time()}
 
     await asyncio.gather(*[_eval(s) for s in symbols[:200]])  # solo top 200
 
