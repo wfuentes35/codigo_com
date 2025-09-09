@@ -144,16 +144,28 @@ def build_telegram_app(
             if isinstance(r, dict) and r.get("status") == "RESERVADA_PRE"
         ]
 
+        all_tickers = await asyncio.to_thread(config.client.get_all_tickers)
+        prices = {ticker['symbol']: float(ticker['price']) for ticker in all_tickers}
         account = await asyncio.to_thread(config.client.get_account)
-        usdt_balance = 0.0
+        free_usdt_balance = 0.0
+        total_usdt_value = 0.0
         for bal in account["balances"]:
-            if bal["asset"] == "USDT":
-                usdt_balance = float(bal["free"])
-                break
+            asset = bal["asset"]
+            total_qty = float(bal["free"]) + float(bal["locked"])
+            if total_qty == 0:
+                continue
+            if asset == "USDT":
+                free_usdt_balance = float(bal["free"])
+                total_usdt_value += total_qty
+            else:
+                price = prices.get(f"{asset}USDT")
+                if price:
+                    total_usdt_value += total_qty * price
 
         header = (
             f"🎯 {len(activos)}/{config.MAX_OPERACIONES_ACTIVAS} operaciones activas\n"
-            f"💵 Saldo USDT: {usdt_balance:.2f}\n"
+            f"💵 Saldo Libre: {free_usdt_balance:.2f} USDT\n"
+            f"💰 Saldo Total: ~{total_usdt_value:.2f} USDT\n"
             f"Δ‑stop={config.STOP_DELTA_USDT} USDT  stop_abs={config.STOP_ABS_USDT} USDT"
         )
 
