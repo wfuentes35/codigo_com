@@ -84,7 +84,7 @@ async def get_all_usdt_symbols(ttl: int = SYMBOLS_TTL) -> list[str]:
         info = await asyncio.to_thread(client.get_exchange_info)
 
     excluded = {"BUSD", "USDC", "TUSD", "EUR", "AUD", "BRL", "IDRT",
-                "PAX", "USDP", "DAI", "XUSD", "USD1", "VIDT", "FDUSD"}
+                "PAX", "USDP", "DAI", "XUSD", "USD1", "VIDT", "FDUSD","EURI"}
 
     symbols = [
         s["symbol"] for s in info["symbols"]
